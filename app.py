@@ -233,35 +233,40 @@ with col_orders:
     st.header("Gestión de Pedidos", divider="green")
 
     with st.expander("📝 Crear Nuevo Pedido", expanded=True):
+        # La gestión de ingredientes (añadir/quitar) se hace fuera del form
+        st.markdown("**Ingredientes Requeridos**")
+        if 'order_ingredients' not in st.session_state:
+            st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
+
+        inventory_names = [""] + list(inventory_data['name'])
+
+        for i in range(len(st.session_state.order_ingredients)):
+            ing = st.session_state.order_ingredients[i]
+            c1, c2, c3 = st.columns([3, 1, 1])
+            ing['name'] = c1.selectbox(f"Ingrediente {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
+            ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}", value=ing['quantity'])
+            if c3.button("➖", key=f"del_ing_{i}"):
+                st.session_state.order_ingredients.pop(i)
+                st.rerun()
+
+        if st.button("Añadir Ingrediente", use_container_width=True):
+            st.session_state.order_ingredients.append({'name': '', 'quantity': 1})
+            st.rerun()
+        
+        # El formulario solo agrupa el título, precio y el botón de envío final
         with st.form("order_form", clear_on_submit=True):
             order_title = st.text_input("Título del Pedido (ej: Plato del Día)")
             order_price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
             
-            st.markdown("**Ingredientes Requeridos**")
-            # Ingredientes dinámicos
-            if 'order_ingredients' not in st.session_state:
-                st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
-
-            inventory_names = [""] + list(inventory_data['name'])
-            
-            for i, ing in enumerate(st.session_state.order_ingredients):
-                c1, c2, c3 = st.columns([3, 1, 1])
-                ing['name'] = c1.selectbox(f"Ingrediente {i+1}", inventory_names, key=f"ing_name_{i}")
-                ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}")
-                if c3.button("➖", key=f"del_ing_{i}"):
-                    st.session_state.order_ingredients.pop(i)
-                    st.rerun()
-
-            if st.button("Añadir Ingrediente", use_container_width=True):
-                st.session_state.order_ingredients.append({'name': '', 'quantity': 1})
-                st.rerun()
-
             submit_order = st.form_submit_button("Crear Pedido", type="primary", use_container_width=True)
             if submit_order:
-                # Filtrar ingredientes vacíos antes de crear el pedido
+                # Al enviar, se leen los ingredientes del session_state
                 valid_ingredients = [ing for ing in st.session_state.order_ingredients if ing['name']]
                 if manager.create_order(order_title, order_price, valid_ingredients):
-                    st.session_state.order_ingredients = [{'name': '', 'quantity': 1}] # Reset
+                    # Resetear la lista de ingredientes para el próximo pedido
+                    st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
+                    st.rerun()
+
 
     # Pestañas para pedidos en proceso y completados
     tab_processing, tab_completed = st.tabs(["En Proceso", "Historial (Completados)"])
