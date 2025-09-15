@@ -2,8 +2,8 @@
 """
 Aplicación Streamlit para la Gestión de Inventarios y Pedidos.
 
-Versión 3.0: Se integran alertas por WhatsApp para nuevos pedidos y bajo
-stock, y se añade un panel de diagnóstico y la pestaña "Acerca de".
+Versión 3.1: Se añade una alerta de WhatsApp para notificar
+cuando un pedido ha sido completado.
 """
 import streamlit as st
 import pandas as pd
@@ -83,7 +83,6 @@ class InventoryManager:
         st.session_state.next_order_id += 1
         st.toast(f"Pedido '{title}' creado.", icon="🧾")
         
-        # --- Disparador de Alerta de WhatsApp ---
         ing_list = [f"- {ing['name']} (x{ing['quantity']})" for ing in ingredients]
         mensaje = f"🧾 Nuevo Pedido Creado\n\n- **Nombre:** {title}\n- **Precio:** ${price:.2f}\n\n**Ingredientes:**\n" + "\n".join(ing_list)
         enviar_alerta_whatsapp(mensaje)
@@ -116,10 +115,14 @@ class InventoryManager:
         st.session_state.orders_df.loc[order_idx, 'status'] = 'completed'
         st.toast(f"Pedido '{order['title']}' completado.", icon="✅")
 
-        # --- Disparador de Alerta de WhatsApp para Bajo Stock ---
+        # Alerta de Pedido Completado
+        mensaje_completado = f"✅ Pedido Completado\n\n- **Nombre:** {order['title']}\n- **Venta:** ${order['price']:.2f}"
+        enviar_alerta_whatsapp(mensaje_completado)
+
+        # Alerta de Bajo Stock (si aplica)
         if low_stock_alerts:
-            mensaje = "📉 ¡Alerta de Bajo Stock!\n\n**Items con pocas unidades:**\n" + "\n".join(low_stock_alerts)
-            enviar_alerta_whatsapp(mensaje)
+            mensaje_stock = "📉 ¡Alerta de Bajo Stock!\n\n**Items con pocas unidades:**\n" + "\n".join(low_stock_alerts)
+            enviar_alerta_whatsapp(mensaje_stock)
 
     def cancel_order(self, order_id):
         st.session_state.orders_df = st.session_state.orders_df[st.session_state.orders_df['id'] != order_id]
@@ -129,7 +132,7 @@ class InventoryManager:
         completed_orders = st.session_state.orders_df[st.session_state.orders_df['status'] == 'completed']
         return {'total_sales': completed_orders['price'].sum(), 'final_inventory': self.get_inventory()}
 
-# --- Lógica de Twilio Mejorada ---
+# --- Lógica de Twilio ---
 def inicializar_twilio_client():
     if not IS_TWILIO_AVAILABLE:
         st.session_state.twilio_status = "Librería no encontrada."
@@ -168,7 +171,6 @@ def enviar_alerta_whatsapp(mensaje):
 
 # --- Funciones de Generación de PDF ---
 def generate_inventory_pdf(inventory_df, low_stock_threshold):
-    # (El código de esta función no cambia)
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -263,14 +265,12 @@ with tab_main:
         st.subheader("Inventario Final")
         st.dataframe(report_data['final_inventory'][['name', 'quantity']], use_container_width=True, hide_index=True)
         st.divider()
-        # --- Panel de Diagnóstico ---
         st.subheader("Diagnóstico de Alertas")
         st.info(f"**Estado de Conexión Twilio:** `{st.session_state.get('twilio_status', 'No determinado')}`")
         if st.button("📲 Enviar Notificación de Prueba", use_container_width=True):
             enviar_alerta_whatsapp("Este es un mensaje de prueba desde el Gestor de Inventarios.")
 
 with tab_about:
-    # (El código de esta pestaña no cambia)
     with st.container(border=True):
         st.header("Sobre el Autor y la Aplicación")
         _, center_col, _ = st.columns([1, 1, 1])
