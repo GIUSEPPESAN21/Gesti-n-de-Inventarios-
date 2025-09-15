@@ -1,235 +1,261 @@
 # -*- coding: utf-8 -*-
 """
-Aplicación Streamlit para la Gestión de Inventarios y Pedidos.
+Aplicación de Tablero Kanban "Kankai" con Streamlit.
 
-Versión 2.0: Se reestructura la interfaz a un sistema de pestañas,
-añadiendo una sección "Acerca de" para la información del autor.
+Versión 4.0: Se integran alertas de WhatsApp para tareas de alta
+dificultad y se mantiene la pestaña "Acerca de".
 """
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+import time
+import random
 from io import BytesIO
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.lib import colors
+import matplotlib.pyplot as plt
+
+# --- Importaciones para Excel y Twilio ---
+try:
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as ExcelImage
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    IS_EXCEL_AVAILABLE = True
+except ImportError:
+    IS_EXCEL_AVAILABLE = False
+
+try:
+    from twilio.rest import Client
+    from twilio.base.exceptions import TwilioRestException
+    IS_TWILIO_AVAILABLE = True
+except ImportError:
+    IS_TWILIO_AVAILABLE = False
+    Client, TwilioRestException = None, None
 
 # --- Lógica de Negocio y Manejo de Datos ---
 
-class InventoryManager:
+class TaskManager:
     """
-    Clase para manejar toda la lógica del inventario y los pedidos.
+    Clase para manejar la lógica de las tareas del tablero Kanban.
     """
     def __init__(self):
-        # Utiliza st.session_state para mantener los datos entre interacciones
-        if 'inventory_df' not in st.session_state:
-            st.session_state.inventory_df = pd.DataFrame([
-                {'id': 1, 'name': 'Camaron', 'quantity': 10},
-                {'id': 2, 'name': 'Mojarra', 'quantity': 8},
-                {'id': 3, 'name': 'Arroz', 'quantity': 500},
-                {'id': 4, 'name': 'Cebolla', 'quantity': 5}
+        if 'tasks_df' not in st.session_state:
+            st.session_state.tasks_df = pd.DataFrame([
+                {'id': 'task-1', 'name': 'Diseñar Prototipo Alfa', 'estimatedTimeMinutes': 480, 'difficulty': '2', 'status': 'todo'},
+                {'id': 'task-2', 'name': 'Investigación de Mercado UX', 'estimatedTimeMinutes': 720, 'difficulty': '3', 'status': 'todo'},
+                {'id': 'task-3', 'name': 'Reunión Kick-off Proyecto K', 'estimatedTimeMinutes': 60, 'difficulty': '1', 'status': 'inprogress'},
+                {'id': 'task-4', 'name': 'Configurar Entorno Dev', 'estimatedTimeMinutes': 240, 'difficulty': '1', 'status': 'done'},
             ])
-        if 'orders_df' not in st.session_state:
-            st.session_state.orders_df = pd.DataFrame(columns=[
-                'id', 'title', 'price', 'ingredients', 'status'
-            ])
-        if 'next_inventory_id' not in st.session_state:
-            st.session_state.next_inventory_id = 5
-        if 'next_order_id' not in st.session_state:
-            st.session_state.next_order_id = 1
-        
-        self.LOW_STOCK_THRESHOLD = 10
+        if 'next_task_id' not in st.session_state:
+            st.session_state.next_task_id = 5
 
-    def get_inventory(self):
-        return st.session_state.inventory_df.sort_values('name').reset_index(drop=True)
+        self.difficulty_map = {'1': 'Baja', '2': 'Media', '3': 'Alta'}
+        self.status_map = {'todo': 'Por Hacer', 'inprogress': 'En Progreso', 'done': 'Finalizado'}
+        self.difficulty_sort_order = {'1': 1, '2': 2, '3': 3}
 
-    def add_inventory_item(self, name, quantity):
+    def get_tasks(self):
+        return st.session_state.tasks_df
+
+    def add_task(self, name, estimated_minutes, difficulty):
         name = name.strip()
-        if not name or quantity <= 0:
-            st.error("El nombre no puede estar vacío y la cantidad debe ser positiva.")
+        if not name or estimated_minutes <= 0:
+            st.error("El nombre no puede estar vacío y el tiempo debe ser positivo.")
             return
 
-        normalized_name = name.lower()
-        existing_items = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == normalized_name]
+        new_id = f"task-{st.session_state.next_task_id}"
+        new_task = pd.DataFrame([{'id': new_id, 'name': name, 'estimatedTimeMinutes': estimated_minutes, 'difficulty': difficulty, 'status': 'todo'}])
+        st.session_state.tasks_df = pd.concat([st.session_state.tasks_df, new_task], ignore_index=True)
+        st.session_state.next_task_id += 1
+        st.toast(f"Tarea '{name}' creada.", icon="📝")
 
-        if not existing_items.empty:
-            idx = existing_items.index[0]
-            st.session_state.inventory_df.loc[idx, 'quantity'] += quantity
-            st.toast(f"Stock de '{name}' actualizado.", icon="📦")
-        else:
-            new_item = pd.DataFrame([{
-                'id': st.session_state.next_inventory_id,
-                'name': name,
-                'quantity': quantity
-            }])
-            st.session_state.inventory_df = pd.concat([st.session_state.inventory_df, new_item], ignore_index=True)
-            st.session_state.next_inventory_id += 1
-            st.toast(f"Item '{name}' agregado al inventario.", icon="✨")
+        # --- Disparador de Alerta de WhatsApp ---
+        if difficulty == '3': # '3' corresponde a Dificultad Alta
+            mensaje = f"🚨 Tarea de Alta Dificultad Creada\n\n- **Nombre:** {name}\n- **Tiempo:** {format_minutes_to_hm(estimated_minutes)}"
+            enviar_alerta_whatsapp(mensaje)
 
-    def create_order(self, title, price, ingredients):
-        if not title or price <= 0 or not ingredients:
-            st.error("El pedido debe tener un título, precio positivo y al menos un ingrediente.")
-            return
+    def update_task_status(self, task_id, new_status):
+        task_idx = st.session_state.tasks_df[st.session_state.tasks_df['id'] == task_id].index
+        if not task_idx.empty:
+            st.session_state.tasks_df.loc[task_idx, 'status'] = new_status
+            task_name = st.session_state.tasks_df.loc[task_idx[0], 'name']
+            st.toast(f"Tarea '{task_name}' movida a '{self.status_map[new_status]}'.", icon="🔄")
 
-        new_order = pd.DataFrame([{
-            'id': st.session_state.next_order_id,
-            'title': title,
-            'price': price,
-            'ingredients': ingredients,
-            'status': 'processing'
-        }])
-        st.session_state.orders_df = pd.concat([st.session_state.orders_df, new_order], ignore_index=True)
-        st.session_state.next_order_id += 1
-        st.toast(f"Pedido '{title}' creado exitosamente.", icon="🧾")
-        return True
+    def delete_task(self, task_id):
+        task_name = st.session_state.tasks_df[st.session_state.tasks_df['id'] == task_id].iloc[0]['name']
+        st.session_state.tasks_df = st.session_state.tasks_df[st.session_state.tasks_df['id'] != task_id]
+        st.toast(f"Tarea '{task_name}' eliminada.", icon="🗑️")
 
-    def complete_order(self, order_id):
-        order_idx = st.session_state.orders_df[st.session_state.orders_df['id'] == order_id].index
-        if order_idx.empty: return
+    def get_progress_summary(self):
+        df = st.session_state.tasks_df
+        total_tasks = len(df)
+        if total_tasks == 0: return {'done': 0, 'pending': 0, 'inprogress': 0, 'total': 0, 'percentage': 0}
+        done_tasks = len(df[df['status'] == 'done'])
+        inprogress_tasks = len(df[df['status'] == 'inprogress'])
+        pending_tasks = total_tasks - done_tasks - inprogress_tasks
+        percentage = round((done_tasks / total_tasks) * 100, 1) if total_tasks > 0 else 0
+        return {'done': done_tasks, 'pending': pending_tasks, 'inprogress': inprogress_tasks, 'total': total_tasks, 'percentage': percentage}
 
-        order = st.session_state.orders_df.loc[order_idx[0]]
-        
-        missing_items = []
-        for ing in order['ingredients']:
-            item_name_lower = ing['name'].lower()
-            inv_item_series = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == item_name_lower]
-            if inv_item_series.empty or inv_item_series.iloc[0]['quantity'] < ing['quantity']:
-                current_qty = 0 if inv_item_series.empty else inv_item_series.iloc[0]['quantity']
-                missing_items.append(f"{ing['name']} (necesita {ing['quantity']}, disponible {current_qty})")
+# --- Lógica de Twilio ---
+def inicializar_twilio_client():
+    if not IS_TWILIO_AVAILABLE: return None
+    try:
+        if hasattr(st, 'secrets') and all(k in st.secrets for k in ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]):
+            account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+            auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+            if account_sid.startswith("AC") and len(auth_token) > 30:
+                st.session_state.twilio_configured = True
+                return Client(account_sid, auth_token)
+    except Exception: pass
+    st.session_state.twilio_configured = False
+    return None
 
-        if missing_items:
-            st.warning(f"Stock insuficiente para '{order['title']}': {', '.join(missing_items)}")
-            return
+def enviar_alerta_whatsapp(mensaje):
+    if 'twilio_client' not in st.session_state or not st.session_state.twilio_client: return
+    if not st.session_state.get('twilio_configured'):
+        st.warning("Credenciales de Twilio no configuradas.", icon="⚠️")
+        return
+    try:
+        from_number = st.secrets["TWILIO_WHATSAPP_FROM_NUMBER"]
+        to_number = st.secrets["DESTINATION_WHATSAPP_NUMBER"]
+        # Prefijo para cuentas de prueba
+        mensaje_final = f"Your Twilio code is {random.randint(1000,9999)}\n\n{mensaje}"
+        st.session_state.twilio_client.messages.create(from_=f'whatsapp:{from_number}', body=mensaje_final, to=f'whatsapp:{to_number}')
+        st.toast(f"¡Alerta enviada a {to_number}!", icon="✅")
+    except TwilioRestException as e:
+        st.error(f"Error de Twilio: {e.msg}", icon="🚨")
+        if e.code == 21608: st.warning("Reactiva tu Sandbox de WhatsApp.", icon="📱")
+    except Exception as e:
+        st.error(f"Error inesperado al enviar WhatsApp: {e}", icon="🚨")
 
-        low_stock_alerts = []
-        for ing in order['ingredients']:
-            item_name_lower = ing['name'].lower()
-            inv_idx = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == item_name_lower].index[0]
-            st.session_state.inventory_df.loc[inv_idx, 'quantity'] -= ing['quantity']
-            
-            new_qty = st.session_state.inventory_df.loc[inv_idx, 'quantity']
-            if new_qty < self.LOW_STOCK_THRESHOLD:
-                low_stock_alerts.append(f"{st.session_state.inventory_df.loc[inv_idx, 'name']}: {new_qty} restantes")
+# --- Funciones Auxiliares y de UI ---
+def format_minutes_to_hm(minutes):
+    if pd.isna(minutes) or minutes < 0: return "N/A"
+    h = int(minutes // 60)
+    m = int(minutes % 60)
+    if h > 0 and m > 0: return f"{h}h {m}m"
+    elif h > 0: return f"{h}h"
+    else: return f"{m}m"
 
-        st.session_state.orders_df.loc[order_idx, 'status'] = 'completed'
-        st.toast(f"Pedido '{order['title']}' completado.", icon="✅")
+def create_progress_chart(summary):
+    if summary['total'] == 0: return None
+    labels = ['Finalizadas', 'En Progreso', 'Pendientes']
+    sizes = [summary['done'], summary['inprogress'], summary['pending']]
+    colors = ['#10b981', '#3b82f6', '#f59e0b']
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors, wedgeprops=dict(width=0.4, edgecolor='w'))
+    ax.axis('equal')
+    return fig
 
-        if low_stock_alerts:
-            st.warning(f"Alerta de bajo stock: {', '.join(low_stock_alerts)}")
-
-    def cancel_order(self, order_id):
-        st.session_state.orders_df = st.session_state.orders_df[st.session_state.orders_df['id'] != order_id]
-        st.toast(f"Pedido #{order_id} cancelado.", icon="🗑️")
-
-    def get_report(self):
-        completed_orders = st.session_state.orders_df[st.session_state.orders_df['status'] == 'completed']
-        total_sales = completed_orders['price'].sum()
-        final_inventory = self.get_inventory()
-        return {'total_sales': total_sales, 'final_inventory': final_inventory}
-
-# --- Funciones de Generación de PDF ---
-def generate_inventory_pdf(inventory_df, low_stock_threshold):
+def generate_excel_report(tasks_df, summary, difficulty_map, status_map):
+    if not IS_EXCEL_AVAILABLE: return None
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = [Paragraph("Reporte de Inventario", styles['h1']), Spacer(1, 0.2 * inch)]
-    table_data = [['ID', 'Nombre', 'Cantidad']]
-    for _, row in inventory_df.iterrows():
-        name = f"⚠️ {row['name']} (Bajo Stock!)" if row['quantity'] < low_stock_threshold else row['name']
-        table_data.append([row['id'], name, row['quantity']])
-    table = Table(table_data)
-    style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12), ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ])
-    table.setStyle(style)
-    story.append(table)
-    doc.build(story)
+    report_df = tasks_df.copy()
+    report_df['estimatedTime'] = report_df['estimatedTimeMinutes'].apply(format_minutes_to_hm)
+    report_df['difficulty'] = report_df['difficulty'].map(difficulty_map)
+    report_df['status'] = report_df['status'].map(status_map)
+    report_df = report_df[['id', 'name', 'status', 'difficulty', 'estimatedTime']]
+    report_df.columns = ['ID', 'Nombre', 'Estado', 'Dificultad', 'Tiempo Estimado']
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        report_df.to_excel(writer, sheet_name='Tareas', index=False)
+        fig = create_progress_chart(summary)
+        if fig:
+            img_buffer = BytesIO()
+            fig.savefig(img_buffer, format='png')
+            plt.close(fig)
+            img_buffer.seek(0)
+            ws = writer.sheets['Tareas']
+            img = ExcelImage(img_buffer)
+            img.anchor = f'A{len(report_df) + 3}'
+            ws.add_image(img)
     buffer.seek(0)
     return buffer
 
 # --- Interfaz de Streamlit ---
-st.set_page_config(page_title="Gestor de Inventarios", layout="wide", page_icon="📦")
-manager = InventoryManager()
+st.set_page_config(page_title="Kankai Pro", layout="wide", page_icon="📝")
+manager = TaskManager()
 
-st.title("📦 Gestor de Inventario Pro X")
+if 'twilio_client' not in st.session_state:
+    st.session_state.twilio_client = inicializar_twilio_client()
 
-# --- Pestañas Principales ---
-tab_main, tab_about = st.tabs(["⚙️ Gestor Principal", "ℹ️ Acerca de"])
+st.title("📝 Kankai Pro Dashboard")
 
-with tab_main:
-    col_inventory, col_orders, col_report = st.columns(3, gap="large")
+# --- Navegación por Pestañas ---
+tab_dashboard, tab_kanban, tab_manage, tab_about = st.tabs(["📊 Dashboard", "📋 Tablero Kanban", "⚙️ Gestión y Reportes", "ℹ️ Acerca de"])
 
-    with col_inventory:
-        st.header("Inventario Actual", divider="blue")
-        with st.expander("➕ Agregar/Actualizar Item"):
-            with st.form("inventory_form", clear_on_submit=True):
-                new_item_name = st.text_input("Nombre del Ingrediente")
-                new_item_qty = st.number_input("Cantidad a Agregar", min_value=1, step=1)
-                if st.form_submit_button("Agregar al Inventario", type="primary", use_container_width=True):
-                    manager.add_inventory_item(new_item_name, new_item_qty)
-        
-        inventory_data = manager.get_inventory()
-        st.dataframe(inventory_data, use_container_width=True, hide_index=True,
-                      column_config={"quantity": st.column_config.NumberColumn("Cantidad", format="%d und")})
-        
-        pdf_buffer = generate_inventory_pdf(inventory_data, manager.LOW_STOCK_THRESHOLD)
-        st.download_button("📄 Descargar Inventario en PDF", pdf_buffer, f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", "application/pdf", use_container_width=True)
+with tab_dashboard:
+    st.header("Análisis de Productividad")
+    summary = manager.get_progress_summary()
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Tareas Totales", f"{summary['total']} 📝")
+    kpi2.metric("Completadas", f"{summary['done']} ✅", f"{summary['percentage']}% del total")
+    kpi3.metric("En Progreso", f"{summary['inprogress']} ⚙️")
+    kpi4.metric("Pendientes", f"{summary['pending']} 📌")
+    st.divider()
+    chart1, chart2 = st.columns(2)
+    with chart1:
+        st.subheader("Progreso General")
+        progress_chart = create_progress_chart(summary)
+        if progress_chart: st.pyplot(progress_chart)
+        else: st.info("No hay tareas para mostrar en el gráfico.")
+    with chart2:
+        st.subheader("Carga de Trabajo por Dificultad")
+        tasks_df = manager.get_tasks()
+        if not tasks_df.empty:
+            difficulty_counts = tasks_df['difficulty'].map(manager.difficulty_map).value_counts()
+            st.bar_chart(difficulty_counts)
+        else: st.info("No hay tareas para analizar.")
 
-    with col_orders:
-        st.header("Gestión de Pedidos", divider="green")
-        with st.expander("📝 Crear Nuevo Pedido", expanded=True):
-            st.markdown("**Ingredientes Requeridos**")
-            if 'order_ingredients' not in st.session_state: st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
-            inventory_names = [""] + list(inventory_data['name'])
-            for i, ing in enumerate(st.session_state.order_ingredients):
-                c1, c2, c3 = st.columns([3, 1, 1])
-                ing['name'] = c1.selectbox(f"Ingrediente {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
-                ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}", value=ing['quantity'])
-                if c3.button("➖", key=f"del_ing_{i}"):
-                    st.session_state.order_ingredients.pop(i)
-                    st.rerun()
-            if st.button("Añadir Ingrediente", use_container_width=True):
-                st.session_state.order_ingredients.append({'name': '', 'quantity': 1})
-                st.rerun()
-            
-            with st.form("order_form", clear_on_submit=True):
-                order_title = st.text_input("Título del Pedido (ej: Plato del Día)")
-                order_price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
-                if st.form_submit_button("Crear Pedido", type="primary", use_container_width=True):
-                    valid_ingredients = [ing for ing in st.session_state.order_ingredients if ing['name']]
-                    if manager.create_order(order_title, order_price, valid_ingredients):
-                        st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
-                        st.rerun()
+with tab_kanban:
+    st.header("Tablero de Tareas")
+    col_todo, col_inprogress, col_done = st.columns(3, gap="medium")
+    board_cols = {"todo": col_todo, "inprogress": col_inprogress, "done": col_done}
+    tasks = manager.get_tasks()
+    for status, col in board_cols.items():
+        with col:
+            st.subheader(f"{manager.status_map[status]} ({len(tasks[tasks['status'] == status])})", divider="gray")
+            for _, task in tasks[tasks['status'] == status].iterrows():
+                difficulty_color_map = {'1': 'green', '2': 'orange', '3': 'red'}
+                color = difficulty_color_map.get(task['difficulty'], 'gray')
+                with st.container(border=True):
+                    st.markdown(f"**{task['name']}**")
+                    st.caption(f"ID: {task['id']}")
+                    st.markdown(f"🕒 **:blue[{format_minutes_to_hm(task['estimatedTimeMinutes'])}]** | Dificultad: **:{color}[{manager.difficulty_map.get(task['difficulty'], 'N/A')}]**")
+                    btn_cols = st.columns(3)
+                    if status == "todo":
+                        if btn_cols[0].button("▶️ Iniciar", key=f"start_{task['id']}", use_container_width=True):
+                            manager.update_task_status(task['id'], 'inprogress'); st.rerun()
+                    if status == "inprogress":
+                        if btn_cols[0].button("⏪", help="Devolver", key=f"return_{task['id']}", use_container_width=True):
+                            manager.update_task_status(task['id'], 'todo'); st.rerun()
+                        if btn_cols[2].button("✔️ Finalizar", key=f"finish_{task['id']}", type="primary", use_container_width=True):
+                            manager.update_task_status(task['id'], 'done'); st.rerun()
+                    if status == "done":
+                        if btn_cols[0].button("🗑️", help="Eliminar", key=f"delete_{task['id']}", use_container_width=True):
+                            manager.delete_task(task['id']); st.rerun()
 
-        tab_processing, tab_completed = st.tabs(["En Proceso", "Historial"])
-        with tab_processing:
-            processing_orders = st.session_state.orders_df[st.session_state.orders_df['status'] == 'processing']
-            if processing_orders.empty: st.info("No hay pedidos en proceso.")
+with tab_manage:
+    col_add, col_optimize = st.columns(2)
+    with col_add:
+        st.header("Añadir Nueva Tarea", divider="blue")
+        with st.form("add_task_form", clear_on_submit=True, border=False):
+            task_name = st.text_input("Nombre de la Tarea")
+            c1, c2 = st.columns(2)
+            task_hours = c1.number_input("Horas Estimadas", min_value=0, step=1)
+            task_minutes = c2.number_input("Minutos", min_value=0, max_value=59, step=1)
+            task_difficulty = st.selectbox("Dificultad", options=list(manager.difficulty_map.keys()), format_func=lambda x: manager.difficulty_map[x])
+            if st.form_submit_button("Añadir Tarea", type="primary", use_container_width=True):
+                total_minutes = (task_hours * 60) + task_minutes
+                manager.add_task(task_name, total_minutes, task_difficulty)
+    with col_optimize:
+        st.header("Optimización y Reportes", divider="violet")
+        st.subheader("Sugerencia de Orden")
+        if st.button("💡 Generar Orden Sugerido", use_container_width=True):
+            optimized_tasks = manager.get_optimization_suggestion()
+            if optimized_tasks.empty: st.info("No hay tareas pendientes.")
             else:
-                for _, order in processing_orders.iterrows():
-                    with st.container(border=True):
-                        st.subheader(f"{order['title']} - ${order['price']:.2f}")
-                        st.caption(f"Ingredientes: {', '.join([f'{ing['name']} (x{ing['quantity']})' for ing in order['ingredients']])}")
-                        b1, b2 = st.columns(2)
-                        if b1.button("✅ Completar", key=f"complete_{order['id']}", type="primary", use_container_width=True):
-                            manager.complete_order(order['id']); st.rerun()
-                        if b2.button("❌ Cancelar", key=f"cancel_{order['id']}", use_container_width=True):
-                            manager.cancel_order(order['id']); st.rerun()
-        with tab_completed:
-            completed_orders = st.session_state.orders_df[st.session_state.orders_df['status'] == 'completed']
-            if completed_orders.empty: st.info("No hay pedidos en el historial.")
-            else: st.dataframe(completed_orders[['id', 'title', 'price']].rename(columns={'title': 'Título', 'price': 'Precio'}), use_container_width=True, hide_index=True)
-
-    with col_report:
-        st.header("Informe Financiero", divider="violet")
-        report_data = manager.get_report()
-        st.metric("💰 Total Ventas (Pedidos Completados)", f"${report_data['total_sales']:.2f}")
-        st.subheader("Resumen de Inventario Final")
-        st.dataframe(report_data['final_inventory'][['name', 'quantity']].rename(columns={'name': 'Item', 'quantity': 'Stock'}), use_container_width=True, hide_index=True)
+                with st.expander("**Orden Sugerido**", expanded=True):
+                    for i, (_, task) in enumerate(optimized_tasks.iterrows()):
+                        st.markdown(f"{i+1}. **{task['name']}** ({manager.difficulty_map[task['difficulty']]}, {format_minutes_to_hm(task['estimatedTimeMinutes'])})")
+        st.subheader("Descargar Reporte")
+        excel_buffer = generate_excel_report(manager.get_tasks(), manager.get_progress_summary(), manager.difficulty_map, manager.status_map)
+        st.download_button("📄 Descargar Reporte en Excel", excel_buffer, f"reporte_kankai_{time.strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 with tab_about:
     with st.container(border=True):
@@ -242,17 +268,15 @@ with tab_about:
         st.markdown("---")
         st.subheader("Acerca de esta Herramienta")
         st.markdown("""
-        Esta aplicación de **Gestión de Inventarios y Pedidos** fue creada para ofrecer una solución sencilla pero potente para pequeños negocios o proyectos. Permite un control en tiempo real del stock, la creación de pedidos que descuentan automáticamente los ingredientes, y la visualización de un informe financiero básico.
+        Esta aplicación de tablero **Kanban 'Kankai Pro'** fue creada para ofrecer una solución visual e interactiva para la gestión de tareas. El objetivo es aplicar los principios de la metodología Kanban para ayudar a individuos y equipos a organizar su flujo de trabajo, visualizar el progreso y optimizar la priorización de tareas.
         
-        El objetivo es demostrar cómo herramientas como Streamlit pueden ser utilizadas para construir aplicaciones de gestión funcionales rápidamente, facilitando la toma de decisiones basada en datos.
+        Desde la gestión de tareas en un tablero visual hasta el análisis de productividad y la exportación de reportes, cada funcionalidad está pensada para mejorar la eficiencia y la claridad en cualquier proyecto.
         """)
         st.markdown("---")
         st.subheader("Contacto y Enlaces Profesionales")
-        st.markdown(
-            """
+        st.markdown("""
             - 🔗 **LinkedIn:** [joseph-javier-sánchez-acuña](https://www.linkedin.com/in/joseph-javier-sánchez-acuña-150410275)
             - 📂 **GitHub:** [GIUSEPPESAN21](https://github.com/GIUSEPPESAN21)
             - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
-            """
-        )
+        """)
 
