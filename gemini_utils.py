@@ -27,6 +27,7 @@ class GeminiUtils:
         """
         # Lista de modelos desde el más nuevo/potente al más estable/antiguo como fallback
         model_candidates = [
+            "gemini-2.0-flash-exp",  # Modelo experimental más reciente
             "gemini-1.5-pro-latest",   # El más potente
             "gemini-1.5-flash-latest", # El más rápido y recomendado para la mayoría de casos
             "gemini-1.0-pro-vision-latest" # Un modelo de visión estable como último recurso
