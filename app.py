@@ -36,8 +36,33 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* Estilo para ocultar la decoración de los botones de radio de Streamlit */
+    div[role="radiogroup"] > div {
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        gap: 2rem;
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+    }
+    div[role="radiogroup"] label {
+        background-color: #ffffff;
+        padding: 0.5rem 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        cursor: pointer;
+        transition: all 0.2s ease-in-out;
+        font-weight: 500;
+    }
+    /* Estilo para el botón de radio seleccionado */
+    div[role="radiogroup"] [aria-checked="true"] {
+        background-color: #2a9d8f;
+        color: white;
+        border-color: #2a9d8f;
+    }
     .main-header { font-size: 2.5rem; color: #2a9d8f; text-align: center; margin-bottom: 1.5rem; }
-    .st-emotion-cache-16txtl3 { padding-top: 2rem; }
     .report-box { background-color: #f0f2f6; padding: 1.5rem; border-radius: 10px; border-left: 6px solid #2a9d8f; margin-bottom: 1rem;}
     .report-header { font-size: 1.2rem; font-weight: bold; color: #333; }
     .report-data { font-size: 1.1rem; color: #555; }
@@ -101,17 +126,19 @@ def enviar_alerta_whatsapp(mensaje):
         st.error(f"Error inesperado al enviar WhatsApp: {e}", icon="🚨")
     return False
 
-# --- BARRA LATERAL DE NAVEGACIÓN ---
-st.sidebar.title("Navegación del Sistema")
-page = st.sidebar.radio(
-    "Selecciona una sección:",
-    ["🏠 Inicio", "📸 Análisis de Imagen", "📦 Gestión de Inventario", "🛒 Gestión de Pedidos", "📊 Dashboard", "👥 Acerca de"]
+# --- NAVEGACIÓN PRINCIPAL CON PESTAÑAS ---
+st.markdown('<h1 class="main-header">🌟 Sistema de Inventario Total</h1>', unsafe_allow_html=True)
+
+page = st.radio(
+    "Navegación del Sistema",
+    ["🏠 Inicio", "📸 Análisis de Imagen", "📦 Gestión de Inventario", "🛒 Gestión de Pedidos", "📊 Dashboard", "👥 Acerca de"],
+    horizontal=True,
+    label_visibility="collapsed"
 )
 
 # --- LÓGICA DE LAS PÁGINAS ---
 
 if page == "🏠 Inicio":
-    st.markdown('<h1 class="main-header">🌟 Bienvenido al Sistema de Inventario Total</h1>', unsafe_allow_html=True)
     st.subheader("Una solución unificada que integra IA para reconocimiento y gestión completa de inventario y pedidos.")
     st.markdown("---")
     
