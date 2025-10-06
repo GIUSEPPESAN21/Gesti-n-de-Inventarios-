@@ -90,7 +90,6 @@ def enviar_alerta_whatsapp(mensaje):
     try:
         from_number = st.secrets["TWILIO_WHATSAPP_FROM_NUMBER"]
         to_number = st.secrets["DESTINATION_WHATSAPP_NUMBER"]
-        # El código aleatorio es un requisito de la sandbox de Twilio
         mensaje_final = f"Your Twilio code is {random.randint(1000,9999)}\n\n{mensaje}"
         message = client.messages.create(from_=f'whatsapp:{from_number}', body=mensaje_final, to=f'whatsapp:{to_number}')
         st.toast("¡Alerta de WhatsApp enviada!", icon="📲")
@@ -101,7 +100,6 @@ def enviar_alerta_whatsapp(mensaje):
     except Exception as e:
         st.error(f"Error inesperado al enviar WhatsApp: {e}", icon="🚨")
     return False
-
 
 # --- BARRA LATERAL DE NAVEGACIÓN ---
 st.sidebar.title("Navegación del Sistema")
@@ -119,7 +117,7 @@ if page == "🏠 Inicio":
     
     try:
         items = firebase.get_all_inventory_items()
-        orders = firebase.get_orders(status=None) # Obtener todos los pedidos
+        orders = firebase.get_orders(status=None)
         item_count = len(items)
         processing_orders = len([o for o in orders if o.get('status') == 'processing'])
         
@@ -141,8 +139,6 @@ if page == "🏠 Inicio":
     """)
 
 elif page == "📸 Análisis de Imagen":
-    # (Este código es casi idéntico al de tu `streamlit_app.py` original)
-    # ... (pegar aquí la lógica de la página "📸 Análisis de Imagen")
     st.header("📸 Detección y Análisis de Objetos por Imagen")
 
     if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
@@ -189,7 +185,6 @@ elif page == "📸 Análisis de Imagen":
         if st.button("↩️ Analizar otra imagen"):
             st.session_state.analysis_in_progress = False; st.rerun()
     else:
-        # ... (resto de la lógica de carga de imagen y YOLO)
         img_source = st.radio("Fuente de la imagen:", ["Cámara", "Subir archivo"], horizontal=True)
         img_buffer = None
         if img_source == "Cámara": img_buffer = st.camera_input("Apunta la cámara", key="camera_input")
@@ -215,7 +210,6 @@ elif page == "📸 Análisis de Imagen":
                             st.session_state.analysis_in_progress = True
                             st.rerun()
 
-
 elif page == "📦 Gestión de Inventario":
     st.header("📦 Gestión de la Base de Datos de Inventario")
 
@@ -233,8 +227,8 @@ elif page == "📦 Gestión de Inventario":
                     try:
                         firebase.save_inventory_item(data, custom_id)
                         st.success(f"Artículo '{name}' guardado.")
-                    except ValueError as e:
-                        st.error(str(e))
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
 
     st.markdown("---")
     st.subheader("Inventario Actual en Firebase")
@@ -266,38 +260,52 @@ elif page == "🛒 Gestión de Pedidos":
     st.header("🛒 Gestión de Pedidos", divider="green")
     
     inventory_items = firebase.get_all_inventory_items()
-    inventory_names = [""] + sorted([item['name'] for item in inventory_items])
+    
+    if inventory_items:
+        inventory_map = {item['name']: item['id'] for item in inventory_items}
+        inventory_names = [""] + sorted(inventory_map.keys())
+    else:
+        inventory_map = {}
+        inventory_names = [""]
+        st.warning("No hay artículos en el inventario para crear pedidos.", icon="📦")
+
 
     col1, col2 = st.columns(2, gap="large")
 
     with col1:
         st.subheader("📝 Crear Nuevo Pedido")
         if 'order_ingredients' not in st.session_state: 
-            st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
+            st.session_state.order_ingredients = [{'name': '', 'quantity': 1, 'id': None}]
 
         for i, ing in enumerate(st.session_state.order_ingredients):
             c1, c2, c3 = st.columns([3, 1, 1])
-            ing['name'] = c1.selectbox(f"Ing. {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
+            selected_name = c1.selectbox(f"Ingrediente {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
+            
+            # CORRECCIÓN: Al seleccionar un nombre, guardamos el nombre Y el ID correspondiente
+            ing['name'] = selected_name
+            ing['id'] = inventory_map.get(selected_name)
+            
             ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}", value=ing['quantity'])
             if c3.button("➖", key=f"del_ing_{i}"):
                 st.session_state.order_ingredients.pop(i); st.rerun()
         
         if st.button("Añadir Ingrediente", use_container_width=True):
-            st.session_state.order_ingredients.append({'name': '', 'quantity': 1}); st.rerun()
+            st.session_state.order_ingredients.append({'name': '', 'quantity': 1, 'id': None}); st.rerun()
 
         with st.form("order_form", clear_on_submit=True):
             title = st.text_input("Título del Pedido")
             price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
             if st.form_submit_button("Crear Pedido", type="primary", use_container_width=True):
-                valid_ings = [ing for ing in st.session_state.order_ingredients if ing['name']]
+                # CORRECCIÓN: Nos aseguramos de que el ingrediente tenga un ID válido
+                valid_ings = [ing for ing in st.session_state.order_ingredients if ing['id']]
                 if not title or price <= 0 or not valid_ings:
-                    st.error("El pedido debe tener título, precio e ingredientes.")
+                    st.error("El pedido debe tener título, precio e ingredientes válidos.")
                 else:
                     order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing'}
                     firebase.create_order(order_data)
                     st.success(f"Pedido '{title}' creado.")
                     enviar_alerta_whatsapp(f"🧾 Nuevo Pedido: {title} por ${price:.2f}")
-                    st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]; st.rerun()
+                    st.session_state.order_ingredients = [{'name': '', 'quantity': 1, 'id': None}]; st.rerun()
 
     with col2:
         st.subheader("⏳ Pedidos en Proceso")
@@ -329,7 +337,6 @@ elif page == "🛒 Gestión de Pedidos":
         st.dataframe(df_completed[['id', 'title', 'price']], use_container_width=True, hide_index=True)
     else:
         st.info("No hay pedidos en el historial.")
-
 
 elif page == "📊 Dashboard":
     st.header("📊 Dashboard del Inventario")
@@ -368,7 +375,6 @@ elif page == "📊 Dashboard":
 
 elif page == "👥 Acerca de":
     st.header("👥 Sobre el Proyecto y sus Creadores")
-    # ... (pegar aquí la lógica de la página "👥 Acerca de")
     with st.container(border=True):
         col_img_est, col_info_est = st.columns([1, 3])
         with col_img_est:
