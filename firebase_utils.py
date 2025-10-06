@@ -23,7 +23,6 @@ class FirebaseManager:
                 if not creds_base64:
                     raise ValueError("El secret 'FIREBASE_SERVICE_ACCOUNT_BASE64' no fue encontrado.")
                 
-                # Decodificar el Base64
                 creds_json_str = base64.b64decode(creds_base64).decode('utf-8')
                 creds_dict = json.loads(creds_json_str)
                 
@@ -41,9 +40,8 @@ class FirebaseManager:
         """Guarda o actualiza un item en la colección 'inventory' usando un ID personalizado."""
         try:
             doc_ref = self.db.collection('inventory').document(custom_id)
-            # Añade timestamp para seguimiento
             data['timestamp'] = datetime.now().isoformat()
-            doc_ref.set(data, merge=True) # merge=True permite actualizar sin borrar otros campos
+            doc_ref.set(data, merge=True)
             logger.info(f"Elemento de inventario guardado/actualizado: {custom_id}")
         except Exception as e:
             logger.error(f"Error al guardar en 'inventory': {e}")
@@ -110,11 +108,11 @@ class FirebaseManager:
             logger.error(f"Error al cancelar pedido: {e}")
             raise
 
-    @firestore.transactional
-    def complete_order_transaction(self, transaction, order_id):
+    # CORRECCIÓN: Se quita el decorador @firestore.transactional y se renombra la función.
+    # Esta función ahora contiene únicamente la lógica que debe ejecutarse de forma atómica.
+    def _complete_order_atomic(self, transaction, order_id):
         """
-        Función transaccional para completar un pedido.
-        Esto asegura que la actualización del stock y del pedido sea atómica.
+        Lógica atómica para completar un pedido. Se ejecuta dentro de una transacción.
         """
         order_ref = self.db.collection('orders').document(order_id)
         order_snapshot = order_ref.get(transaction=transaction)
@@ -123,11 +121,13 @@ class FirebaseManager:
         
         order_data = order_snapshot.to_dict()
         
-        # 1. Verificar stock
         inventory_updates = []
         for ing in order_data.get('ingredients', []):
-            item_ref = self.db.collection('inventory').document(ing['name']) # Asumimos ID de inventario es el nombre
+            # Asumimos que el ID del item en inventario es su nombre. ¡Esto debe ser consistente!
+            # Si usas un ID numérico o SKU, debes buscar por ese campo.
+            item_ref = self.db.collection('inventory').document(ing['name'])
             item_snapshot = item_ref.get(transaction=transaction)
+            
             if not item_snapshot.exists:
                 return False, f"Ingrediente '{ing['name']}' no encontrado en el inventario."
             
@@ -138,7 +138,6 @@ class FirebaseManager:
             new_quantity = current_quantity - ing['quantity']
             inventory_updates.append({'ref': item_ref, 'quantity': new_quantity})
 
-        # 2. Si hay stock, actualizar todo
         for update in inventory_updates:
             transaction.update(update['ref'], {'quantity': update['quantity']})
             
@@ -146,7 +145,15 @@ class FirebaseManager:
         
         return True, f"Pedido '{order_data['title']}' completado con éxito."
 
+    # CORRECCIÓN: La función principal ahora crea la transacción y llama a transaction.run()
     def complete_order(self, order_id):
         """Punto de entrada para la transacción de completar pedido."""
-        transaction = self.db.transaction()
-        return self.complete_order_transaction(transaction, order_id)
+        try:
+            transaction = self.db.transaction()
+            # transaction.run() ejecuta la función atómica de forma segura.
+            # Le pasamos la función y los argumentos necesarios (sin 'transaction').
+            return transaction.run(self._complete_order_atomic, order_id)
+        except Exception as e:
+            logger.error(f"Fallo la transacción para completar el pedido {order_id}: {e}")
+            return False, f"Error en la transacción: {e}"
+
