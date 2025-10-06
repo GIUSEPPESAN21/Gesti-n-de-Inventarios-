@@ -18,50 +18,60 @@ class GeminiUtils:
         genai.configure(api_key=self.api_key)
         
         # Inicializa el modelo usando el método robusto de selección
-        self.model = self._get_robust_model()
+        self.model = self._get_robust_vision_model()
     
-    def _get_robust_model(self):
+    def _get_robust_vision_model(self):
         """
-        Intenta inicializar el mejor modelo de Gemini disponible de una lista priorizada.
-        Esto hace que la aplicación sea más resiliente a cambios en la disponibilidad de modelos.
+        Intenta inicializar el mejor modelo de VISIÓN de Gemini disponible.
+        Realiza una pequeña llamada de prueba para asegurar que el modelo no solo existe,
+        sino que también es compatible con análisis de imágenes.
         """
-        # Lista de modelos desde el más nuevo/potente al más estable/antiguo como fallback
+        # Lista de modelos de visión, desde el más nuevo al más estable
         model_candidates = [
-            "gemini-2.0-flash-exp",  # Modelo experimental más reciente
-            "gemini-1.5-pro-latest",   # El más potente
-            "gemini-1.5-flash-latest", # El más rápido y recomendado para la mayoría de casos
-            "gemini-1.0-pro-vision-latest" # Un modelo de visión estable como último recurso
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-flash-latest",
+            "gemini-pro-vision" # Un modelo de visión clásico como fallback
         ]
         
         for model_name in model_candidates:
             try:
                 model = genai.GenerativeModel(model_name)
-                logger.info(f"✅ Modelo de Gemini '{model_name}' inicializado con éxito.")
+                # Prueba rápida para asegurar que el modelo puede manejar imágenes
+                model.generate_content(["test", Image.new('RGB', (1, 1), color = 'red')])
+                logger.info(f"✅ Modelo de visión '{model_name}' inicializado y verificado con éxito.")
                 return model
             except Exception as e:
-                logger.warning(f"⚠️ Modelo '{model_name}' no disponible o falló la inicialización: {e}")
+                logger.warning(f"⚠️ Modelo de visión '{model_name}' no disponible o no compatible: {e}")
                 continue
         
-        # Si ningún modelo de la lista funciona, se lanza un error crítico.
-        raise Exception("No se pudo inicializar ningún modelo de Gemini compatible. Revisa tu API Key y la configuración del proyecto de Google AI.")
+        raise Exception("No se pudo inicializar ningún modelo de visión de Gemini compatible. Revisa tu API Key.")
     
     def analyze_image(self, image_pil: Image, description: str = ""):
         """
         Analiza una imagen (en formato PIL) y devuelve una respuesta JSON estructurada.
         """
         try:
-            # Se mantiene el prompt optimizado para forzar una salida JSON limpia,
-            # lo que es crucial para que la app no falle al procesar la respuesta.
+            # El prompt se mantiene optimizado para forzar una salida JSON limpia.
             prompt = f"""
             Analiza esta imagen de un objeto de inventario.
-            Descripción adicional proporcionada por el sistema de detección: "{description}"
+            Descripción adicional del sistema de detección: "{description}"
             
-            Tu tarea es actuar como un experto en catalogación. Responde ÚNICAMENTE con un objeto JSON válido con las siguientes claves:
+            Tu tarea es actuar como un experto catalogador. Responde ÚNICAMENTE con un objeto JSON válido con estas claves:
             - "elemento_identificado": (string) El nombre específico y descriptivo del objeto.
-            - "cantidad_aproximada": (integer) El número de unidades que ves en la imagen.
-            - "estado_condicion": (string) La condición aparente (ej: "Nuevo en caja", "Usado con desgaste ligero", "Empaquetado").
-            - "posible_categoria_de_inventario": (string) La categoría más lógica para este item (ej: "Electrónica", "Suministros de Oficina", "Alimentos no perecederos").
+            - "cantidad_aproximada": (integer) El número de unidades que ves.
+            - "estado_condicion": (string) La condición aparente (ej: "Nuevo en caja", "Usado").
+            - "caracteristicas_distintivas": (string) Una lista de características visuales en una sola cadena de texto.
+            - "posible_categoria_de_inventario": (string) La categoría más lógica (ej: "Electrónica").
 
+            Ejemplo de respuesta:
+            {{
+              "elemento_identificado": "Reloj de pulsera negro",
+              "cantidad_aproximada": 1,
+              "estado_condicion": "Nuevo",
+              "caracteristicas_distintivas": "Correa de silicona negra, esfera digital, diseño moderno",
+              "posible_categoria_de_inventario": "Accesorios Personales"
+            }}
+            
             IMPORTANTE: Tu respuesta debe ser solo el objeto JSON, sin texto adicional, explicaciones, ni las marcas ```json.
             """
             
@@ -70,11 +80,9 @@ class GeminiUtils:
             if response and response.text:
                 return response.text.strip()
             else:
-                # Devuelve un error JSON si la respuesta está vacía
                 return json.dumps({"error": "La IA no devolvió una respuesta válida."})
                 
         except Exception as e:
-            logger.error(f"Error crítico durante el análisis de imagen con Gemini: {e}")
-            # Devuelve un error JSON si ocurre una excepción en la llamada a la API
+            logger.error(f"Error crítico durante el análisis con Gemini: {e}")
             return json.dumps({"error": f"No se pudo contactar al servicio de IA: {str(e)}"})
 
