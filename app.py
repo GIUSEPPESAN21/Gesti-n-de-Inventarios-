@@ -88,6 +88,28 @@ if logo_base64:
         .stMetric {{ background-color: #ffffff; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #2a9d8f; }}
         .stExpander {{ background-color: #ffffff; border-radius: 1rem !important; border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
         .report-box {{ background-color: #e9f5f4; padding: 1.5rem; border-radius: 1rem; border-left: 5px solid #2a9d8f; margin-bottom: 1rem; }}
+
+        /* --- NUEVO: Estilos para la Tabla --- */
+        .stDataFrame {{
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            border: none;
+        }}
+        .stDataFrame thead th {{
+            background-color: #2a9d8f;
+            color: white;
+            font-weight: 600;
+            font-size: 1rem;
+            text-transform: uppercase;
+        }}
+        .stDataFrame tbody tr:nth-child(even) {{
+            background-color: #f8f9fa;
+        }}
+        .stDataFrame tbody tr:hover {{
+            background-color: #e9c46a; /* Amarillo/Dorado al pasar el cursor */
+            color: #264653;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -139,12 +161,12 @@ if logo_base64:
     st.markdown(
         f'<div class="main-header-container">'
         f'<img src="data:image/jpeg;base64,{logo_base64}" alt="HI-DRIVE Logo">'
-        f'<h1 class="main-header">Sistema de Inventario Total</h1>'
+        f'<h1 class="main-header">HI-DRIVE</h1>' # Título actualizado
         f'</div>',
         unsafe_allow_html=True
     )
 else:
-    st.markdown('<h1 class="main-header">🌟 Sistema de Inventario Total</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🌟 HI-DRIVE | Sistema de Inventario</h1>', unsafe_allow_html=True)
 
 page = st.radio(
     "Navegación del Sistema",
