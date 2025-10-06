@@ -9,12 +9,14 @@ import streamlit as st
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- LÓGICA DE TRANSACCIÓN ---
-# Esta función AHORA ESTÁ FUERA de la clase. Este es el cambio clave.
-# No tiene 'self' y recibe la conexión a la 'db' como argumento.
-def _run_complete_order_transaction(transaction, db, order_id):
+# --- LÓGICA DE TRANSACCIÓN ATÓMICA ---
+# La función decorada está FUERA de la clase.
+# Recibe la transacción, la conexión a la DB y el order_id.
+@firestore.transactional
+def _complete_order_atomic(transaction, db, order_id):
     """
-    Contiene la lógica atómica que se ejecutará dentro de la transacción.
+    Contiene la lógica de la transacción. El decorador @firestore.transactional
+    se encarga de crear, confirmar (commit) o deshacer (rollback) la transacción.
     """
     order_ref = db.collection('orders').document(order_id)
     order_snapshot = order_ref.get(transaction=transaction)
@@ -38,11 +40,9 @@ def _run_complete_order_transaction(transaction, db, order_id):
         if current_quantity < ing['quantity']:
             raise ValueError(f"Stock insuficiente para '{ing.get('name', ing['id'])}'. Se necesitan {ing['quantity']}, hay {current_quantity}.")
         
-        # Si hay stock, se descuenta
         new_quantity = current_quantity - ing['quantity']
         transaction.update(item_ref, {'quantity': new_quantity})
         
-    # Finalmente, se actualiza el estado del pedido
     transaction.update(order_ref, {'status': 'completed'})
     return True, f"Pedido '{order_data['title']}' completado con éxito."
 
@@ -72,7 +72,7 @@ class FirebaseManager:
             logger.error(f"Error fatal al inicializar Firebase: {e}")
             raise
 
-    # ... (El resto de los métodos como get_all_inventory_items, create_order, etc., permanecen igual)
+    # ... (El resto de los métodos permanecen igual)
     def save_inventory_item(self, data, custom_id):
         try:
             doc_ref = self.db.collection('inventory').document(custom_id)
@@ -140,16 +140,14 @@ class FirebaseManager:
 
     def complete_order(self, order_id):
         """
-        Punto de entrada público. Llama a la función de transacción global.
+        Punto de entrada público. Llama a la función transaccional global.
         """
         try:
             # Crea una transacción
             transaction = self.db.transaction()
-            # Ejecuta la función global, pasándole los argumentos necesarios.
-            # transaction.run() se encarga de pasar el objeto 'transaction' a la función.
-            result = transaction.run(_run_complete_order_transaction, self.db, order_id)
-            return result
+            # Llama a la función decorada, pasándole la transacción y los argumentos.
+            return _complete_order_atomic(transaction, self.db, order_id)
         except Exception as e:
             logger.error(f"Fallo la transacción para el pedido {order_id}: {e}")
-            return False, f"Error: {str(e)}"
+            return False, f"Error en la transacción: {str(e)}"
 
