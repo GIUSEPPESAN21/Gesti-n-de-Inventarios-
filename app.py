@@ -37,7 +37,7 @@ st.set_page_config(
 
 # --- FUNCIÓN PARA CARGAR Y CODIFICAR EL LOGO ---
 @st.cache_data
-def get_logo_base64(file_path):
+def get_logo_base_64(file_path):
     try:
         with open(file_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode('utf-8')
@@ -45,7 +45,7 @@ def get_logo_base64(file_path):
         return None
 
 # --- INYECCIÓN DE CSS PARA UNA INTERFAZ MEJORADA ---
-logo_base64 = get_logo_base64("logo.jpg")
+logo_base64 = get_logo_base_64("logo.jpg")
 if logo_base64:
     st.markdown(f"""
     <style>
@@ -188,8 +188,11 @@ elif page == "📸 Análisis de Imagen":
     st.header("📸 Detección y Análisis de Objetos por Imagen")
     
     if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
-        # ... (la lógica aquí sigue igual)
+        # La lógica para mostrar los resultados del análisis no cambia
+        st.subheader("✔️ Resultado del Análisis de Gemini")
+        # ... (código existente para mostrar resultados)
     else:
+        # --- BLOQUE DE CÓDIGO CORREGIDO ---
         # --- MEJORA: La cámara se enciende por defecto ---
         img_buffer = st.camera_input("📷 Apunta la cámara a los objetos para detectarlos en tiempo real", key="camera_input")
         
@@ -268,7 +271,7 @@ elif page == "📦 Inventario":
                         st.success(f"Artículo '{name}' guardado.")
                         st.rerun()
         
-        if items:
+        if 'items' in locals() and items:
             with st.container(border=True):
                 st.subheader("🗑️ Eliminar Artículo")
                 item_to_delete_name = st.selectbox("Selecciona un artículo", [""] + [f"{item['name']} ({item['id']})" for item in items])
@@ -286,7 +289,6 @@ elif page == "🛒 Pedidos":
     st.header("🛒 Gestión de Pedidos")
     
     inventory_items = firebase.get_all_inventory_items()
-    # ... (resto de la lógica de esta página sigue igual, los estilos se aplican solos)
     if inventory_items:
         inventory_map = {item['name']: item['id'] for item in inventory_items}
         inventory_names = [""] + sorted(inventory_map.keys())
