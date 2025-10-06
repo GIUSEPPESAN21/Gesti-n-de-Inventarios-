@@ -9,7 +9,44 @@ import streamlit as st
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# La función transaccional atómica ya no es necesaria con el método manual.
+# --- LÓGICA DE TRANSACCIÓN ATÓMICA ---
+# La función decorada está FUERA de la clase.
+# Recibe la transacción, la conexión a la DB y el order_id.
+@firestore.transactional
+def _complete_order_atomic(transaction, db, order_id):
+    """
+    Contiene la lógica de la transacción. El decorador @firestore.transactional
+    se encarga de crear, confirmar (commit) o deshacer (rollback) la transacción
+    automáticamente.
+    """
+    order_ref = db.collection('orders').document(order_id)
+    order_snapshot = order_ref.get(transaction=transaction)
+    if not order_snapshot.exists:
+        raise ValueError("El pedido no existe.")
+    
+    order_data = order_snapshot.to_dict()
+    
+    # Bucle para verificar y actualizar el stock de cada ingrediente
+    for ing in order_data.get('ingredients', []):
+        if 'id' not in ing:
+            raise ValueError(f"Dato inconsistente: al ingrediente '{ing.get('name')}' le falta su ID.")
+
+        item_ref = db.collection('inventory').document(ing['id'])
+        item_snapshot = item_ref.get(transaction=transaction)
+        
+        if not item_snapshot.exists:
+            raise ValueError(f"Ingrediente con ID '{ing['id']}' no encontrado en el inventario.")
+        
+        current_quantity = item_snapshot.to_dict().get('quantity', 0)
+        if current_quantity < ing['quantity']:
+            raise ValueError(f"Stock insuficiente para '{ing.get('name', ing['id'])}'. Se necesitan {ing['quantity']}, hay {current_quantity}.")
+        
+        new_quantity = current_quantity - ing['quantity']
+        transaction.update(item_ref, {'quantity': new_quantity})
+        
+    transaction.update(order_ref, {'status': 'completed'})
+    return True, f"Pedido '{order_data['title']}' completado con éxito."
+
 
 class FirebaseManager:
     def __init__(self):
@@ -104,44 +141,16 @@ class FirebaseManager:
 
     def complete_order(self, order_id):
         """
-        Completa un pedido usando una transacción manual para garantizar la atomicidad.
+        Punto de entrada público. Llama a la función transaccional global.
+        El decorador se encarga de todo el manejo de commit y rollback.
         """
-        transaction = self.db.transaction()
         try:
-            # 1. Leer el pedido DENTRO de la transacción
-            order_ref = self.db.collection('orders').document(order_id)
-            order_snapshot = order_ref.get(transaction=transaction)
-            if not order_snapshot.exists:
-                raise ValueError("El pedido no existe.")
-            
-            order_data = order_snapshot.to_dict()
-
-            # 2. Iterar sobre los ingredientes para verificar y descontar el stock
-            for ing in order_data.get('ingredients', []):
-                item_ref = self.db.collection('inventory').document(ing['id'])
-                item_snapshot = item_ref.get(transaction=transaction)
-                
-                if not item_snapshot.exists:
-                    raise ValueError(f"Ingrediente ID '{ing['id']}' no encontrado.")
-                
-                current_quantity = item_snapshot.to_dict().get('quantity', 0)
-                if current_quantity < ing['quantity']:
-                    raise ValueError(f"Stock insuficiente para '{ing.get('name', ing['id'])}'.")
-                
-                new_quantity = current_quantity - ing['quantity']
-                transaction.update(item_ref, {'quantity': new_quantity})
-
-            # 3. Actualizar el estado del pedido
-            transaction.update(order_ref, {'status': 'completed'})
-            
-            # 4. Si todo fue exitoso, confirmar los cambios
-            transaction.commit()
-            
-            return True, f"Pedido '{order_data['title']}' completado con éxito."
-
+            # Crea una transacción
+            transaction = self.db.transaction()
+            # Llama a la función decorada, pasándole la transacción y los argumentos.
+            return _complete_order_atomic(transaction, self.db, order_id)
         except Exception as e:
-            # 5. Si algo falla, revertir todo
-            transaction.rollback()
+            # Captura cualquier error que ocurra durante la transacción (ej. ValueError por stock)
             logger.error(f"Fallo la transacción para el pedido {order_id}: {e}")
             return False, f"Error en la transacción: {str(e)}"
 
