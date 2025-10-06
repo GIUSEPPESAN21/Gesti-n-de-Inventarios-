@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class FirebaseManager:
     def __init__(self):
         self.db = None
-        self.project_id = "reconocimiento-inventario" # Asegúrate que este sea tu Project ID de Firebase
+        self.project_id = "reconocimiento-inventario"
         self._initialize_firebase()
     
     def _initialize_firebase(self):
@@ -37,7 +37,6 @@ class FirebaseManager:
 
     # --- Métodos para Inventario ---
     def save_inventory_item(self, data, custom_id):
-        """Guarda o actualiza un item en la colección 'inventory' usando un ID personalizado."""
         try:
             doc_ref = self.db.collection('inventory').document(custom_id)
             data['timestamp'] = datetime.now().isoformat()
@@ -48,7 +47,6 @@ class FirebaseManager:
             raise
 
     def get_all_inventory_items(self):
-        """Obtiene todos los elementos de la colección 'inventory'."""
         try:
             docs = self.db.collection('inventory').stream()
             items = []
@@ -62,7 +60,6 @@ class FirebaseManager:
             return []
 
     def delete_inventory_item(self, doc_id):
-        """Elimina un elemento de inventario por su ID."""
         try:
             self.db.collection('inventory').document(doc_id).delete()
             logger.info(f"Elemento de inventario {doc_id} eliminado.")
@@ -72,7 +69,6 @@ class FirebaseManager:
 
     # --- Métodos para Pedidos ---
     def create_order(self, order_data):
-        """Crea un nuevo pedido en la colección 'orders'."""
         try:
             order_data['timestamp'] = datetime.now().isoformat()
             self.db.collection('orders').add(order_data)
@@ -82,7 +78,6 @@ class FirebaseManager:
             raise
 
     def get_orders(self, status='processing'):
-        """Obtiene pedidos, filtrados por estado ('processing', 'completed', o None para todos)."""
         try:
             query = self.db.collection('orders')
             if status:
@@ -100,7 +95,6 @@ class FirebaseManager:
             return []
 
     def cancel_order(self, order_id):
-        """Elimina un pedido por su ID."""
         try:
             self.db.collection('orders').document(order_id).delete()
             logger.info(f"Pedido {order_id} cancelado.")
@@ -108,52 +102,48 @@ class FirebaseManager:
             logger.error(f"Error al cancelar pedido: {e}")
             raise
 
-    # CORRECCIÓN: Se quita el decorador @firestore.transactional y se renombra la función.
-    # Esta función ahora contiene únicamente la lógica que debe ejecutarse de forma atómica.
-    def _complete_order_atomic(self, transaction, order_id):
+    # CORRECCIÓN DEFINITIVA: Se usa el decorador en un único método público.
+    # La app llamará a `firebase.complete_order(order_id)` y el decorador
+    # se encargará de crear y pasar el objeto 'transaction'.
+    @firestore.transactional
+    def complete_order(self, transaction, order_id):
         """
-        Lógica atómica para completar un pedido. Se ejecuta dentro de una transacción.
+        Completa un pedido de forma atómica.
         """
-        order_ref = self.db.collection('orders').document(order_id)
-        order_snapshot = order_ref.get(transaction=transaction)
-        if not order_snapshot.exists:
-            return False, "El pedido no existe."
-        
-        order_data = order_snapshot.to_dict()
-        
-        inventory_updates = []
-        for ing in order_data.get('ingredients', []):
-            # Asumimos que el ID del item en inventario es su nombre. ¡Esto debe ser consistente!
-            # Si usas un ID numérico o SKU, debes buscar por ese campo.
-            item_ref = self.db.collection('inventory').document(ing['name'])
-            item_snapshot = item_ref.get(transaction=transaction)
-            
-            if not item_snapshot.exists:
-                return False, f"Ingrediente '{ing['name']}' no encontrado en el inventario."
-            
-            current_quantity = item_snapshot.to_dict().get('quantity', 0)
-            if current_quantity < ing['quantity']:
-                return False, f"Stock insuficiente para '{ing['name']}'. Necesitas {ing['quantity']}, tienes {current_quantity}."
-            
-            new_quantity = current_quantity - ing['quantity']
-            inventory_updates.append({'ref': item_ref, 'quantity': new_quantity})
-
-        for update in inventory_updates:
-            transaction.update(update['ref'], {'quantity': update['quantity']})
-            
-        transaction.update(order_ref, {'status': 'completed'})
-        
-        return True, f"Pedido '{order_data['title']}' completado con éxito."
-
-    # CORRECCIÓN: La función principal ahora crea la transacción y llama a transaction.run()
-    def complete_order(self, order_id):
-        """Punto de entrada para la transacción de completar pedido."""
         try:
-            transaction = self.db.transaction()
-            # transaction.run() ejecuta la función atómica de forma segura.
-            # Le pasamos la función y los argumentos necesarios (sin 'transaction').
-            return transaction.run(self._complete_order_atomic, order_id)
+            order_ref = self.db.collection('orders').document(order_id)
+            order_snapshot = order_ref.get(transaction=transaction)
+            if not order_snapshot.exists:
+                return False, "El pedido no existe."
+            
+            order_data = order_snapshot.to_dict()
+            
+            inventory_updates = []
+            for ing in order_data.get('ingredients', []):
+                if 'id' not in ing:
+                    return False, f"Dato inconsistente en el pedido: al ingrediente '{ing.get('name', 'desconocido')}' le falta su ID."
+
+                item_ref = self.db.collection('inventory').document(ing['id'])
+                item_snapshot = item_ref.get(transaction=transaction)
+                
+                if not item_snapshot.exists:
+                    return False, f"Ingrediente con ID '{ing['id']}' no encontrado en el inventario."
+                
+                current_quantity = item_snapshot.to_dict().get('quantity', 0)
+                if current_quantity < ing['quantity']:
+                    return False, f"Stock insuficiente para '{ing.get('name', ing['id'])}'. Necesitas {ing['quantity']}, tienes {current_quantity}."
+                
+                new_quantity = current_quantity - ing['quantity']
+                inventory_updates.append({'ref': item_ref, 'quantity': new_quantity})
+
+            for update in inventory_updates:
+                transaction.update(update['ref'], {'quantity': update['quantity']})
+                
+            transaction.update(order_ref, {'status': 'completed'})
+            
+            return True, f"Pedido '{order_data['title']}' completado con éxito."
         except Exception as e:
-            logger.error(f"Fallo la transacción para completar el pedido {order_id}: {e}")
-            return False, f"Error en la transacción: {e}"
+            logger.error(f"Fallo DENTRO de la transacción para el pedido {order_id}: {e}")
+            # Al lanzar la excepción, Firebase se encarga de revertir la transacción.
+            raise e
 
