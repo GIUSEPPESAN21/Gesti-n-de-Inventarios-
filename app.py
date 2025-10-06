@@ -90,13 +90,7 @@ st.markdown(f"""
     .stExpander {{ background-color: #ffffff; border-radius: 1rem !important; border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
     .report-box {{ background-color: #e9f5f4; padding: 1.5rem; border-radius: 1rem; border-left: 5px solid #2a9d8f; margin-bottom: 1rem; }}
 
-    /* --- Estilos para la Tabla y la nueva lista de inventario --- */
-    .stDataFrame {{ border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: none; }}
-    .stDataFrame thead th {{ background-color: #2a9d8f; color: white; font-weight: 600; font-size: 1rem; text-transform: uppercase; }}
-    .stDataFrame tbody tr:nth-child(even) {{ background-color: #f8f9fa; }}
-    .stDataFrame tbody tr:hover {{ background-color: #e9c46a; color: #264653; }}
-
-    /* --- NUEVO: Estilo para cada item de la lista de inventario --- */
+    /* --- Estilos para la lista de inventario --- */
     .inventory-item {{
         background-color: #ffffff;
         padding: 1rem 1.5rem;
@@ -125,7 +119,6 @@ st.markdown(f"""
         padding: 0.3rem 0.8rem;
         border-radius: 0.5rem;
     }}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -196,7 +189,6 @@ st.markdown("---")
 # --- LÓGICA DE LAS PÁGINAS ---
 
 if page == "🏠 Inicio":
-    # ... (Sin cambios aquí)
     st.subheader("Una solución unificada que integra IA para reconocimiento y gestión completa de inventario y pedidos.")
     st.markdown("---")
     
@@ -224,41 +216,98 @@ if page == "🏠 Inicio":
     """)
 
 elif page == "📸 Análisis de Imagen":
-    # ... (Sin cambios aquí)
     st.header("📸 Detección y Análisis de Objetos por Imagen")
-    
+
     if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
         st.subheader("✔️ Resultado del Análisis de Gemini")
-        # ... (código existente para mostrar resultados)
-    else:
-        img_buffer = st.camera_input("📷 Apunta la cámara a los objetos para detectarlos en tiempo real", key="camera_input")
-        st.info("💡 Si prefieres, también puedes subir un archivo de imagen a continuación.")
-        uploaded_file = st.file_uploader("📂 O sube un archivo de imagen", type=['png', 'jpg', 'jpeg'], key="file_uploader")
+        analysis_text = st.session_state.last_analysis
         
-        active_image = img_buffer if img_buffer else uploaded_file
+        try:
+            clean_json_str = analysis_text.strip().replace("```json", "").replace("```", "")
+            analysis_data = json.loads(clean_json_str)
+            
+            if "error" not in analysis_data:
+                # Muestra los resultados del análisis
+                st.markdown('<div class="report-box">', unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Elemento Identificado:</span> <span class='report-data'>{analysis_data.get('elemento_identificado', 'N/A')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Cantidad Aproximada:</span> <span class='report-data'>{analysis_data.get('cantidad_aproximada', 'N/A')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Condición/Estado:</span> <span class='report-data'>{analysis_data.get('estado_condicion', 'N/A')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Categoría Sugerida:</span> <span class='report-data'>{analysis_data.get('posible_categoria_de_inventario', 'N/A')}</span>", unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        if active_image:
-            pil_image = Image.open(active_image)
-            with st.spinner("🧠 Detectando objetos con IA..."):
+                # Formulario para guardar en la base de datos
+                with st.form("save_to_db_form"):
+                    st.subheader("💾 Registrar en Inventario")
+                    custom_id = st.text_input("ID Personalizado (SKU):", key="custom_id")
+                    description = st.text_input("Descripción:", value=analysis_data.get('elemento_identificado', ''))
+                    quantity = st.number_input("Unidades:", min_value=1, value=analysis_data.get('cantidad_aproximada', 1), step=1)
+                    
+                    if st.form_submit_button("Añadir a la Base de Datos", type="primary", use_container_width=True):
+                        if not custom_id or not description:
+                            st.warning("El ID y la Descripción son obligatorios.")
+                        else:
+                            with st.spinner("Guardando..."):
+                                data_to_save = {
+                                    "name": description,
+                                    "quantity": quantity,
+                                    "tipo": "imagen",
+                                    "analisis_ia": analysis_data,
+                                    "timestamp": firebase.get_timestamp()
+                                }
+                                firebase.save_inventory_item(data_to_save, custom_id)
+                                st.success(f"¡Artículo '{description}' guardado con éxito!")
+                                st.session_state.analysis_in_progress = False
+                                st.rerun()
+            else:
+                 st.error(f"Error de Gemini: {analysis_data['error']}")
+        except json.JSONDecodeError:
+            st.error("La IA devolvió un formato inesperado. Por favor, intenta de nuevo.")
+            st.code(analysis_text, language='text')
+
+        if st.button("↩️ Analizar otra imagen"):
+            st.session_state.analysis_in_progress = False
+            st.rerun()
+    else:
+        # Interfaz para capturar o subir la imagen
+        img_source = st.radio("Elige la fuente de la imagen:", ["Cámara en vivo", "Subir un archivo"], horizontal=True)
+        img_buffer = None
+        if img_source == "Cámara en vivo":
+            img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera_input")
+        else:
+            img_buffer = st.file_uploader("Sube un archivo de imagen", type=['png', 'jpg', 'jpeg'], key="file_uploader")
+
+        if img_buffer:
+            pil_image = Image.open(img_buffer)
+            
+            with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
                 results = yolo_model(pil_image)
 
-            st.image(results[0].plot(), caption="Objetos detectados por YOLO.", use_column_width=True)
-            
+            st.subheader("🔍 Objetos Detectados")
+            annotated_image = results[0].plot()
+            st.image(annotated_image, caption="Imagen con objetos detectados por YOLO.", use_column_width=True)
+
             detections = results[0]
+            
             if detections.boxes:
-                st.subheader("🔍 Selecciona un objeto para analizar en detalle")
-                cols = st.columns(4)
+                st.info(f"Se detectaron {len(detections.boxes)} objetos. Selecciona uno para un análisis detallado con Gemini.")
+                # Crear columnas para los botones de análisis
+                cols = st.columns(min(len(detections.boxes), 4))
                 for i, box in enumerate(detections.boxes):
                     class_name = detections.names[box.cls[0].item()]
                     col = cols[i % 4]
                     if col.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
                         coords = box.xyxy[0].cpu().numpy().astype(int)
                         cropped_pil_image = pil_image.crop(tuple(coords))
-                        with st.spinner("🤖 Gemini está analizando..."):
-                            analysis_text = gemini.analyze_image(cropped_pil_image, f"Objeto: {class_name}")
+                        
+                        st.image(cropped_pil_image, caption=f"Recorte de '{class_name}' enviado a Gemini...")
+
+                        with st.spinner("🤖 Gemini está analizando el recorte..."):
+                            analysis_text = gemini.analyze_image(cropped_pil_image, f"Objeto detectado como {class_name}")
                             st.session_state.last_analysis = analysis_text
                             st.session_state.analysis_in_progress = True
                             st.rerun()
+            else:
+                st.warning("No se detectaron objetos conocidos en la imagen.")
 
 elif page == "📦 Inventario":
     st.header("📦 Gestión de Inventario")
@@ -274,7 +323,6 @@ elif page == "📦 Inventario":
                 items = firebase.get_all_inventory_items()
             
             if items:
-                # --- CAMBIO: Reemplazar st.dataframe con una lista de texto con estilo ---
                 st.markdown('<div class="inventory-list">', unsafe_allow_html=True)
                 for item in items:
                     name = item.get('name', 'N/A')
@@ -289,11 +337,10 @@ elif page == "📦 Inventario":
                                 <div class="name">{name}</div>
                                 <div class="details">ID: {item_id} | Tipo: {tipo}</div>
                             </div>
-                            <div class="quantity">{quantity}</div>
+                            <div class="quantity">{quantity if quantity is not None else '0'}</div>
                         </div>
                         """, unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-
             else:
                 st.info("El inventario está vacío. ¡Añade tu primer artículo!")
                 
@@ -301,7 +348,6 @@ elif page == "📦 Inventario":
             st.error(f"No se pudo conectar con la base de datos: {e}")
     
     with col2:
-        # ... (La lógica de "Añadir" y "Eliminar" no cambia)
         with st.container(border=True):
             st.subheader("➕ Añadir Artículo")
             with st.form("manual_add_form", clear_on_submit=True):
@@ -313,7 +359,7 @@ elif page == "📦 Inventario":
                     if not custom_id or not name:
                         st.warning("El ID y el Nombre son obligatorios.")
                     else:
-                        data = {"name": name, "quantity": quantity, "tipo": "manual"}
+                        data = {"name": name, "quantity": quantity, "tipo": "manual", "timestamp": firebase.get_timestamp()}
                         firebase.save_inventory_item(data, custom_id)
                         st.success(f"Artículo '{name}' guardado.")
                         st.rerun()
@@ -329,9 +375,7 @@ elif page == "📦 Inventario":
                         st.success(f"Artículo eliminado.")
                         st.rerun()
 
-
 elif page == "🛒 Pedidos":
-    # ... (Sin cambios aquí)
     st.header("🛒 Gestión de Pedidos")
     
     inventory_items = firebase.get_all_inventory_items()
@@ -342,7 +386,6 @@ elif page == "🛒 Pedidos":
         inventory_map = {}
         inventory_names = [""]
         st.warning("No hay artículos en el inventario para crear pedidos.", icon="📦")
-
 
     col1, col2 = st.columns(2, gap="large")
 
@@ -372,7 +415,7 @@ elif page == "🛒 Pedidos":
                     if not title or price <= 0 or not valid_ings:
                         st.error("El pedido debe tener título, precio e ingredientes válidos.")
                     else:
-                        order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing'}
+                        order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing', "timestamp": firebase.get_timestamp()}
                         firebase.create_order(order_data)
                         st.success(f"Pedido '{title}' creado.")
                         enviar_alerta_whatsapp(f"🧾 Nuevo Pedido: {title} por ${price:.2f}")
@@ -409,7 +452,6 @@ elif page == "🛒 Pedidos":
         st.info("No hay pedidos en el historial.")
 
 elif page == "📊 Dashboard":
-    # ... (Sin cambios aquí)
     st.header("📊 Dashboard del Inventario")
     try:
         with st.spinner("Generando estadísticas..."):
@@ -432,6 +474,8 @@ elif page == "📊 Dashboard":
 
             with col2:
                 st.subheader("Top 5 - Artículos con Mayor Stock")
+                # Asegurarse que la columna 'quantity' sea numérica
+                df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
                 df_quant = df.sort_values('quantity', ascending=False).head(5)
                 fig_bar = px.bar(
                     df_quant,
@@ -448,7 +492,6 @@ elif page == "📊 Dashboard":
         st.error(f"Error al crear el dashboard: {e}")
 
 elif page == "👥 Acerca de":
-    # ... (Sin cambios aquí)
     st.header("👥 Sobre el Proyecto y sus Creadores")
     with st.container(border=True):
         col_img_est, col_info_est = st.columns([1, 3])
