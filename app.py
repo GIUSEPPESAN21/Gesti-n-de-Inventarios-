@@ -46,72 +46,88 @@ def get_logo_base_64(file_path):
 
 # --- INYECCIÓN DE CSS PARA UNA INTERFAZ MEJORADA ---
 logo_base64 = get_logo_base_64("logo.jpg")
-if logo_base64:
-    st.markdown(f"""
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+st.markdown(f"""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
 
-        /* --- Estilos Generales --- */
-        body, .stApp {{
-            font-family: 'Poppins', sans-serif;
-            background-color: #f8f9fa;
-        }}
+    /* --- Estilos Generales --- */
+    body, .stApp {{
+        font-family: 'Poppins', sans-serif;
+        background-color: #f8f9fa;
+    }}
 
-        /* --- Logo en la parte superior --- */
-        .main-header-container {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 0rem;
-        }}
-        .main-header-container img {{
-            height: 80px;
-        }}
-        .main-header {{
-            font-size: 3rem;
-            font-weight: 700;
-            color: #264653; /* Azul oscuro */
-            text-align: center;
-        }}
-        
-        /* --- Otros estilos ... (se mantienen igual) --- */
-        h2, h3 {{ color: #2a9d8f; font-weight: 600; }}
-        div[role="radiogroup"] > div {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; background-color: #ffffff; padding: 1rem; border-radius: 1rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
-        div[role="radiogroup"] label {{ background-color: #f8f9fa; padding: 0.7rem 1.5rem; border-radius: 0.75rem; border: 1px solid #e0e0e0; cursor: pointer; transition: all 0.3s ease; font-weight: 500; }}
-        div[role="radiogroup"] [aria-checked="true"] {{ background-color: #2a9d8f; color: white; border-color: #2a9d8f; box-shadow: 0 4px 14px rgba(42, 157, 143, 0.4); transform: translateY(-2px); }}
-        .stButton > button {{ border-radius: 0.75rem; padding: 10px 22px; font-weight: 600; transition: all 0.2s ease; border: none; }}
-        .stButton > button[kind="primary"] {{ background-color: #e76f51; color: white; box-shadow: 0 4px 14px rgba(231, 111, 81, 0.3); }}
-        .stButton > button[kind="primary"]:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(231, 111, 81, 0.4); }}
-        .stButton > button:not([kind="primary"]) {{ background-color: #ffffff; color: #555; border: 1px solid #ddd; }}
-        .stButton > button:not([kind="primary"]):hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-color: #2a9d8f; color: #2a9d8f; }}
-        .stMetric {{ background-color: #ffffff; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #2a9d8f; }}
-        .stExpander {{ background-color: #ffffff; border-radius: 1rem !important; border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
-        .report-box {{ background-color: #e9f5f4; padding: 1.5rem; border-radius: 1rem; border-left: 5px solid #2a9d8f; margin-bottom: 1rem; }}
+    /* --- Logo en la parte superior --- */
+    .main-header-container {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        margin-bottom: 0rem;
+    }}
+    .main-header-container img {{
+        height: 80px;
+    }}
+    .main-header {{
+        font-size: 3rem;
+        font-weight: 700;
+        color: #264653; /* Azul oscuro */
+        text-align: center;
+    }}
+    
+    /* --- Estilos de Navegación y Botones --- */
+    h2, h3 {{ color: #2a9d8f; font-weight: 600; }}
+    div[role="radiogroup"] > div {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; background-color: #ffffff; padding: 1rem; border-radius: 1rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
+    div[role="radiogroup"] label {{ background-color: #f8f9fa; padding: 0.7rem 1.5rem; border-radius: 0.75rem; border: 1px solid #e0e0e0; cursor: pointer; transition: all 0.3s ease; font-weight: 500; }}
+    div[role="radiogroup"] [aria-checked="true"] {{ background-color: #2a9d8f; color: white; border-color: #2a9d8f; box-shadow: 0 4px 14px rgba(42, 157, 143, 0.4); transform: translateY(-2px); }}
+    .stButton > button {{ border-radius: 0.75rem; padding: 10px 22px; font-weight: 600; transition: all 0.2s ease; border: none; }}
+    .stButton > button[kind="primary"] {{ background-color: #e76f51; color: white; box-shadow: 0 4px 14px rgba(231, 111, 81, 0.3); }}
+    .stButton > button[kind="primary"]:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(231, 111, 81, 0.4); }}
+    .stButton > button:not([kind="primary"]) {{ background-color: #ffffff; color: #555; border: 1px solid #ddd; }}
+    .stButton > button:not([kind="primary"]):hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-color: #2a9d8f; color: #2a9d8f; }}
+    
+    /* --- Estilos de Contenedores y Métricas --- */
+    .stMetric {{ background-color: #ffffff; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #2a9d8f; }}
+    .stExpander {{ background-color: #ffffff; border-radius: 1rem !important; border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
+    .report-box {{ background-color: #e9f5f4; padding: 1.5rem; border-radius: 1rem; border-left: 5px solid #2a9d8f; margin-bottom: 1rem; }}
 
-        /* --- NUEVO: Estilos para la Tabla --- */
-        .stDataFrame {{
-            border-radius: 1rem;
-            overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            border: none;
-        }}
-        .stDataFrame thead th {{
-            background-color: #2a9d8f;
-            color: white;
-            font-weight: 600;
-            font-size: 1rem;
-            text-transform: uppercase;
-        }}
-        .stDataFrame tbody tr:nth-child(even) {{
-            background-color: #f8f9fa;
-        }}
-        .stDataFrame tbody tr:hover {{
-            background-color: #e9c46a; /* Amarillo/Dorado al pasar el cursor */
-            color: #264653;
-        }}
-    </style>
-    """, unsafe_allow_html=True)
+    /* --- Estilos para la Tabla y la nueva lista de inventario --- */
+    .stDataFrame {{ border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: none; }}
+    .stDataFrame thead th {{ background-color: #2a9d8f; color: white; font-weight: 600; font-size: 1rem; text-transform: uppercase; }}
+    .stDataFrame tbody tr:nth-child(even) {{ background-color: #f8f9fa; }}
+    .stDataFrame tbody tr:hover {{ background-color: #e9c46a; color: #264653; }}
+
+    /* --- NUEVO: Estilo para cada item de la lista de inventario --- */
+    .inventory-item {{
+        background-color: #ffffff;
+        padding: 1rem 1.5rem;
+        border-radius: 0.75rem;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        border-left: 5px solid #e9c46a;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }}
+    .inventory-item .name {{
+        font-weight: 600;
+        color: #264653;
+        font-size: 1.1rem;
+    }}
+    .inventory-item .details {{
+        font-size: 0.9rem;
+        color: #555;
+    }}
+    .inventory-item .quantity {{
+        font-weight: 700;
+        font-size: 1.2rem;
+        color: #2a9d8f;
+        background-color: #e9f5f4;
+        padding: 0.3rem 0.8rem;
+        border-radius: 0.5rem;
+    }}
+
+</style>
+""", unsafe_allow_html=True)
 
 # --- INICIALIZACIÓN DE SERVICIOS ---
 @st.cache_resource
@@ -161,7 +177,7 @@ if logo_base64:
     st.markdown(
         f'<div class="main-header-container">'
         f'<img src="data:image/jpeg;base64,{logo_base64}" alt="HI-DRIVE Logo">'
-        f'<h1 class="main-header">HI-DRIVE</h1>' # Título actualizado
+        f'<h1 class="main-header">HI-DRIVE</h1>'
         f'</div>',
         unsafe_allow_html=True
     )
@@ -180,6 +196,7 @@ st.markdown("---")
 # --- LÓGICA DE LAS PÁGINAS ---
 
 if page == "🏠 Inicio":
+    # ... (Sin cambios aquí)
     st.subheader("Una solución unificada que integra IA para reconocimiento y gestión completa de inventario y pedidos.")
     st.markdown("---")
     
@@ -207,28 +224,18 @@ if page == "🏠 Inicio":
     """)
 
 elif page == "📸 Análisis de Imagen":
+    # ... (Sin cambios aquí)
     st.header("📸 Detección y Análisis de Objetos por Imagen")
     
     if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
-        # La lógica para mostrar los resultados del análisis no cambia
         st.subheader("✔️ Resultado del Análisis de Gemini")
         # ... (código existente para mostrar resultados)
     else:
-        # --- BLOQUE DE CÓDIGO CORREGIDO ---
-        # --- MEJORA: La cámara se enciende por defecto ---
         img_buffer = st.camera_input("📷 Apunta la cámara a los objetos para detectarlos en tiempo real", key="camera_input")
-        
         st.info("💡 Si prefieres, también puedes subir un archivo de imagen a continuación.")
         uploaded_file = st.file_uploader("📂 O sube un archivo de imagen", type=['png', 'jpg', 'jpeg'], key="file_uploader")
-
-        # Priorizar la imagen de la cámara si está activa, si no, usar el archivo subido
-        if img_buffer:
-            active_image = img_buffer
-        elif uploaded_file:
-            active_image = uploaded_file
-        else:
-            active_image = None
-            st.warning("Esperando imagen de la cámara o un archivo subido...")
+        
+        active_image = img_buffer if img_buffer else uploaded_file
 
         if active_image:
             pil_image = Image.open(active_image)
@@ -256,7 +263,6 @@ elif page == "📸 Análisis de Imagen":
 elif page == "📦 Inventario":
     st.header("📦 Gestión de Inventario")
 
-    # --- MEJORA: Interfaz más limpia y funcional ---
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -268,8 +274,26 @@ elif page == "📦 Inventario":
                 items = firebase.get_all_inventory_items()
             
             if items:
-                df_items = pd.DataFrame(items)
-                st.dataframe(df_items[['id', 'name', 'quantity', 'tipo']], hide_index=True, use_container_width=True)
+                # --- CAMBIO: Reemplazar st.dataframe con una lista de texto con estilo ---
+                st.markdown('<div class="inventory-list">', unsafe_allow_html=True)
+                for item in items:
+                    name = item.get('name', 'N/A')
+                    quantity = item.get('quantity', 0)
+                    item_id = item.get('id', 'N/A')
+                    tipo = item.get('tipo', 'N/A')
+                    
+                    st.markdown(
+                        f"""
+                        <div class="inventory-item">
+                            <div>
+                                <div class="name">{name}</div>
+                                <div class="details">ID: {item_id} | Tipo: {tipo}</div>
+                            </div>
+                            <div class="quantity">{quantity}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
             else:
                 st.info("El inventario está vacío. ¡Añade tu primer artículo!")
                 
@@ -277,6 +301,7 @@ elif page == "📦 Inventario":
             st.error(f"No se pudo conectar con la base de datos: {e}")
     
     with col2:
+        # ... (La lógica de "Añadir" y "Eliminar" no cambia)
         with st.container(border=True):
             st.subheader("➕ Añadir Artículo")
             with st.form("manual_add_form", clear_on_submit=True):
@@ -305,9 +330,8 @@ elif page == "📦 Inventario":
                         st.rerun()
 
 
-# El resto de las páginas (Pedidos, Dashboard, Acerca de) no necesitan cambios funcionales,
-# ya que heredan los nuevos estilos automáticamente.
 elif page == "🛒 Pedidos":
+    # ... (Sin cambios aquí)
     st.header("🛒 Gestión de Pedidos")
     
     inventory_items = firebase.get_all_inventory_items()
@@ -385,6 +409,7 @@ elif page == "🛒 Pedidos":
         st.info("No hay pedidos en el historial.")
 
 elif page == "📊 Dashboard":
+    # ... (Sin cambios aquí)
     st.header("📊 Dashboard del Inventario")
     try:
         with st.spinner("Generando estadísticas..."):
@@ -423,6 +448,7 @@ elif page == "📊 Dashboard":
         st.error(f"Error al crear el dashboard: {e}")
 
 elif page == "👥 Acerca de":
+    # ... (Sin cambios aquí)
     st.header("👥 Sobre el Proyecto y sus Creadores")
     with st.container(border=True):
         col_img_est, col_info_est = st.columns([1, 3])
