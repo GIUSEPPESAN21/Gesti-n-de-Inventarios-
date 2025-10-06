@@ -1,26 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Aplicación Streamlit para la Gestión de Inventarios y Pedidos.
-
-Versión 3.1: Se añade una alerta de WhatsApp para notificar
-cuando un pedido ha sido completado.
+Aplicación Streamlit Unificada para Gestión de Inventario con IA.
+Combina el reconocimiento de objetos con la gestión de pedidos,
+utilizando Firebase como base de datos central.
 """
 import streamlit as st
+from PIL import Image
+import numpy as np
+import cv2
 import pandas as pd
-from datetime import datetime
-from io import BytesIO
+import plotly.express as px
+import json
+from collections import Counter
 import random
 
-# --- Importaciones para PDF y Twilio ---
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.units import inch
-    from reportlab.lib import colors
-    IS_PDF_AVAILABLE = True
-except ImportError:
-    IS_PDF_AVAILABLE = False
+# --- Importaciones de utilidades y dependencias ---
+from firebase_utils import FirebaseManager
+from gemini_utils import GeminiUtils
+from ultralytics import YOLO
 
 try:
     from twilio.rest import Client
@@ -30,109 +27,43 @@ except ImportError:
     IS_TWILIO_AVAILABLE = False
     Client, TwilioRestException = None, None
 
-# --- Lógica de Negocio y Manejo de Datos ---
+# --- CONFIGURACIÓN DE PÁGINA Y ESTILOS ---
+st.set_page_config(
+    page_title="Sistema de Inventario IA Total",
+    page_icon="🌟",
+    layout="wide"
+)
 
-class InventoryManager:
-    """
-    Clase para manejar toda la lógica del inventario y los pedidos.
-    """
-    def __init__(self):
-        # Utiliza st.session_state para mantener los datos
-        if 'inventory_df' not in st.session_state:
-            st.session_state.inventory_df = pd.DataFrame([
-                {'id': 1, 'name': 'Camaron', 'quantity': 15},
-                {'id': 2, 'name': 'Mojarra', 'quantity': 12},
-                {'id': 3, 'name': 'Arroz', 'quantity': 500},
-                {'id': 4, 'name': 'Cebolla', 'quantity': 8}
-            ])
-        if 'orders_df' not in st.session_state:
-            st.session_state.orders_df = pd.DataFrame(columns=['id', 'title', 'price', 'ingredients', 'status'])
-        if 'next_inventory_id' not in st.session_state:
-            st.session_state.next_inventory_id = 5
-        if 'next_order_id' not in st.session_state:
-            st.session_state.next_order_id = 1
-        
-        self.LOW_STOCK_THRESHOLD = 10
+st.markdown("""
+<style>
+    .main-header { font-size: 2.5rem; color: #2a9d8f; text-align: center; margin-bottom: 1.5rem; }
+    .st-emotion-cache-16txtl3 { padding-top: 2rem; }
+    .report-box { background-color: #f0f2f6; padding: 1.5rem; border-radius: 10px; border-left: 6px solid #2a9d8f; margin-bottom: 1rem;}
+    .report-header { font-size: 1.2rem; font-weight: bold; color: #333; }
+    .report-data { font-size: 1.1rem; color: #555; }
+</style>
+""", unsafe_allow_html=True)
 
-    def get_inventory(self):
-        return st.session_state.inventory_df.sort_values('name').reset_index(drop=True)
+# --- INICIALIZACIÓN DE SERVICIOS (Cache para eficiencia) ---
+@st.cache_resource
+def initialize_services():
+    """Carga modelos y establece conexiones a servicios una sola vez."""
+    try:
+        yolo_model = YOLO('yolov8m.pt')
+        firebase_handler = FirebaseManager()
+        gemini_handler = GeminiUtils()
+        return yolo_model, firebase_handler, gemini_handler
+    except Exception as e:
+        st.error(f"**Error Crítico de Inicialización.** No se pudo cargar un modelo o conectar a un servicio. Revisa los logs y tus secrets.")
+        st.code(f"Detalle: {e}", language="bash")
+        return None, None, None
 
-    def add_inventory_item(self, name, quantity):
-        name = name.strip()
-        if not name or quantity <= 0:
-            st.error("El nombre no puede estar vacío y la cantidad debe ser positiva.")
-            return
-        normalized_name = name.lower()
-        existing_items = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == normalized_name]
-        if not existing_items.empty:
-            idx = existing_items.index[0]
-            st.session_state.inventory_df.loc[idx, 'quantity'] += quantity
-            st.toast(f"Stock de '{name}' actualizado.", icon="📦")
-        else:
-            new_item = pd.DataFrame([{'id': st.session_state.next_inventory_id, 'name': name, 'quantity': quantity}])
-            st.session_state.inventory_df = pd.concat([st.session_state.inventory_df, new_item], ignore_index=True)
-            st.session_state.next_inventory_id += 1
-            st.toast(f"Item '{name}' agregado.", icon="✨")
+yolo_model, firebase, gemini = initialize_services()
 
-    def create_order(self, title, price, ingredients):
-        if not title or price <= 0 or not ingredients:
-            st.error("El pedido debe tener título, precio positivo y ingredientes.")
-            return False
-        new_order = pd.DataFrame([{'id': st.session_state.next_order_id, 'title': title, 'price': price, 'ingredients': ingredients, 'status': 'processing'}])
-        st.session_state.orders_df = pd.concat([st.session_state.orders_df, new_order], ignore_index=True)
-        st.session_state.next_order_id += 1
-        st.toast(f"Pedido '{title}' creado.", icon="🧾")
-        
-        ing_list = [f"- {ing['name']} (x{ing['quantity']})" for ing in ingredients]
-        mensaje = f"🧾 Nuevo Pedido Creado\n\n- **Nombre:** {title}\n- **Precio:** ${price:.2f}\n\n**Ingredientes:**\n" + "\n".join(ing_list)
-        enviar_alerta_whatsapp(mensaje)
-        return True
-
-    def complete_order(self, order_id):
-        order_idx = st.session_state.orders_df[st.session_state.orders_df['id'] == order_id].index
-        if order_idx.empty: return
-
-        order = st.session_state.orders_df.loc[order_idx[0]]
-        
-        missing_items = []
-        for ing in order['ingredients']:
-            inv_item = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == ing['name'].lower()]
-            if inv_item.empty or inv_item.iloc[0]['quantity'] < ing['quantity']:
-                missing_items.append(ing['name'])
-        if missing_items:
-            st.warning(f"Stock insuficiente para: {', '.join(missing_items)}")
-            return
-
-        low_stock_alerts = []
-        for ing in order['ingredients']:
-            inv_idx = st.session_state.inventory_df[st.session_state.inventory_df['name'].str.lower() == ing['name'].lower()].index[0]
-            st.session_state.inventory_df.loc[inv_idx, 'quantity'] -= ing['quantity']
-            new_qty = st.session_state.inventory_df.loc[inv_idx, 'quantity']
-            if new_qty < self.LOW_STOCK_THRESHOLD:
-                item_name = st.session_state.inventory_df.loc[inv_idx, 'name']
-                low_stock_alerts.append(f"- {item_name}: {new_qty} restantes")
-
-        st.session_state.orders_df.loc[order_idx, 'status'] = 'completed'
-        st.toast(f"Pedido '{order['title']}' completado.", icon="✅")
-
-        # Alerta de Pedido Completado
-        mensaje_completado = f"✅ Pedido Completado\n\n- **Nombre:** {order['title']}\n- **Venta:** ${order['price']:.2f}"
-        enviar_alerta_whatsapp(mensaje_completado)
-
-        # Alerta de Bajo Stock (si aplica)
-        if low_stock_alerts:
-            mensaje_stock = "📉 ¡Alerta de Bajo Stock!\n\n**Items con pocas unidades:**\n" + "\n".join(low_stock_alerts)
-            enviar_alerta_whatsapp(mensaje_stock)
-
-    def cancel_order(self, order_id):
-        st.session_state.orders_df = st.session_state.orders_df[st.session_state.orders_df['id'] != order_id]
-        st.toast(f"Pedido #{order_id} cancelado.", icon="🗑️")
-
-    def get_report(self):
-        completed_orders = st.session_state.orders_df[st.session_state.orders_df['status'] == 'completed']
-        return {'total_sales': completed_orders['price'].sum(), 'final_inventory': self.get_inventory()}
-
-# --- Lógica de Twilio ---
+if not all([yolo_model, firebase, gemini]):
+    st.stop()
+    
+# --- LÓGICA DE TWILIO PARA NOTIFICACIONES ---
 def inicializar_twilio_client():
     if not IS_TWILIO_AVAILABLE:
         st.session_state.twilio_status = "Librería no encontrada."
@@ -141,151 +72,315 @@ def inicializar_twilio_client():
         if hasattr(st, 'secrets') and all(k in st.secrets for k in ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]):
             account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
             auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
-            if account_sid.startswith("AC") and len(auth_token) > 30:
-                st.session_state.twilio_status = "✅ Conectado"
-                return Client(account_sid, auth_token)
+            client = Client(account_sid, auth_token)
+            st.session_state.twilio_status = "✅ Conectado"
+            return client
     except Exception as e:
         st.session_state.twilio_status = f"🚨 Error: {e}"
-        return None
-    st.session_state.twilio_status = "⚠️ Secrets no configurados."
     return None
 
+if 'twilio_client' not in st.session_state:
+    st.session_state.twilio_client = inicializar_twilio_client()
+
 def enviar_alerta_whatsapp(mensaje):
-    if 'twilio_client' not in st.session_state or st.session_state.twilio_client is None:
+    client = st.session_state.twilio_client
+    if not client:
+        st.warning("Cliente de Twilio no inicializado. No se pueden enviar alertas.")
         return False
     try:
         from_number = st.secrets["TWILIO_WHATSAPP_FROM_NUMBER"]
         to_number = st.secrets["DESTINATION_WHATSAPP_NUMBER"]
+        # El código aleatorio es un requisito de la sandbox de Twilio
         mensaje_final = f"Your Twilio code is {random.randint(1000,9999)}\n\n{mensaje}"
-        message = st.session_state.twilio_client.messages.create(from_=f'whatsapp:{from_number}', body=mensaje_final, to=f'whatsapp:{to_number}')
-        if message.sid:
-            st.toast("¡Alerta de WhatsApp enviada!", icon="📲")
-            return True
+        message = client.messages.create(from_=f'whatsapp:{from_number}', body=mensaje_final, to=f'whatsapp:{to_number}')
+        st.toast("¡Alerta de WhatsApp enviada!", icon="📲")
+        return True
     except TwilioRestException as e:
         st.error(f"Error de Twilio: {e.msg}", icon="🚨")
         if e.code == 21608: st.warning("Reactiva tu Sandbox de WhatsApp.", icon="📱")
-        return False
     except Exception as e:
         st.error(f"Error inesperado al enviar WhatsApp: {e}", icon="🚨")
-        return False
+    return False
 
-# --- Funciones de Generación de PDF ---
-def generate_inventory_pdf(inventory_df, low_stock_threshold):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = [Paragraph("Reporte de Inventario", styles['h1']), Spacer(1, 0.2 * inch)]
-    table_data = [['ID', 'Nombre', 'Cantidad']]
-    for _, row in inventory_df.iterrows():
-        name = f"⚠️ {row['name']} (Bajo Stock!)" if row['quantity'] < low_stock_threshold else row['name']
-        table_data.append([row['id'], name, row['quantity']])
-    table = Table(table_data)
-    style = TableStyle([('BACKGROUND', (0,0), (-1,0), colors.grey), ('GRID', (0,0), (-1,-1), 1, colors.black)])
-    table.setStyle(style)
-    story.append(table)
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
 
-# --- Interfaz de Streamlit ---
-st.set_page_config(page_title="Gestor de Inventarios", layout="wide", page_icon="📦")
+# --- BARRA LATERAL DE NAVEGACIÓN ---
+st.sidebar.title("Navegación del Sistema")
+page = st.sidebar.radio(
+    "Selecciona una sección:",
+    ["🏠 Inicio", "📸 Análisis de Imagen", "📦 Gestión de Inventario", "🛒 Gestión de Pedidos", "📊 Dashboard", "👥 Acerca de"]
+)
 
-# Inicialización única
-if 'manager' not in st.session_state:
-    st.session_state.manager = InventoryManager()
-if 'twilio_client' not in st.session_state:
-    st.session_state.twilio_client = inicializar_twilio_client()
-manager = st.session_state.manager
+# --- LÓGICA DE LAS PÁGINAS ---
 
-st.title("📦 Gestor de Inventario Pro X")
+if page == "🏠 Inicio":
+    st.markdown('<h1 class="main-header">🌟 Bienvenido al Sistema de Inventario Total</h1>', unsafe_allow_html=True)
+    st.subheader("Una solución unificada que integra IA para reconocimiento y gestión completa de inventario y pedidos.")
+    st.markdown("---")
+    
+    try:
+        items = firebase.get_all_inventory_items()
+        orders = firebase.get_orders(status=None) # Obtener todos los pedidos
+        item_count = len(items)
+        processing_orders = len([o for o in orders if o.get('status') == 'processing'])
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("📦 Artículos en Inventario", item_count)
+        col2.metric("⏳ Pedidos en Proceso", processing_orders)
+        col3.metric("✅ Pedidos Completados", len([o for o in orders if o.get('status') == 'completed']))
+    except Exception as e:
+        st.warning(f"No se pudieron cargar las estadísticas: {e}")
+    
+    st.markdown("---")
+    st.subheader("Funcionalidades Principales:")
+    st.markdown("""
+    - **Análisis de Imagen**: Usa la IA de Gemini para identificar, contar y categorizar productos automáticamente.
+    - **Gestión de Inventario**: Añade, busca y elimina artículos de tu inventario en tiempo real a través de Firebase.
+    - **Gestión de Pedidos**: Crea nuevos pedidos, procesalos descontando el stock automáticamente y mantén un historial.
+    - **Dashboard**: Visualiza la composición y actividad de tu inventario con gráficos interactivos.
+    - **Alertas**: Recibe notificaciones por WhatsApp cuando se crean o completan pedidos.
+    """)
 
-# --- Pestañas Principales ---
-tab_main, tab_about = st.tabs(["⚙️ Gestor Principal", "ℹ️ Acerca de"])
+elif page == "📸 Análisis de Imagen":
+    # (Este código es casi idéntico al de tu `streamlit_app.py` original)
+    # ... (pegar aquí la lógica de la página "📸 Análisis de Imagen")
+    st.header("📸 Detección y Análisis de Objetos por Imagen")
 
-with tab_main:
-    col_inventory, col_orders, col_report = st.columns(3, gap="large")
+    if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
+        st.subheader("✔️ Resultado del Análisis de Gemini")
+        analysis_text = st.session_state.last_analysis
+        
+        try:
+            clean_json_str = analysis_text.strip().replace("```json", "").replace("```", "")
+            analysis_data = json.loads(clean_json_str)
+            
+            if "error" not in analysis_data:
+                st.markdown('<div class="report-box">', unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Elemento:</span> <span class='report-data'>{analysis_data.get('elemento_identificado', 'N/A')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Cantidad:</span> <span class='report-data'>{analysis_data.get('cantidad_aproximada', 'N/A')}</span>", unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_inventory:
-        st.header("Inventario Actual", divider="blue")
-        with st.expander("➕ Agregar/Actualizar Item"):
-            with st.form("inventory_form", clear_on_submit=True):
-                new_item_name = st.text_input("Nombre del Ingrediente")
-                new_item_qty = st.number_input("Cantidad a Agregar", min_value=1, step=1)
-                if st.form_submit_button("Guardar en Inventario", type="primary", use_container_width=True):
-                    manager.add_inventory_item(new_item_name, new_item_qty)
-        inventory_data = manager.get_inventory()
-        st.dataframe(inventory_data, use_container_width=True, hide_index=True)
-        pdf_buffer = generate_inventory_pdf(inventory_data, manager.LOW_STOCK_THRESHOLD)
-        st.download_button("📄 Descargar Inventario en PDF", pdf_buffer, f"inventario.pdf", "application/pdf", use_container_width=True)
-
-    with col_orders:
-        st.header("Gestión de Pedidos", divider="green")
-        with st.expander("📝 Crear Nuevo Pedido", expanded=True):
-            if 'order_ingredients' not in st.session_state: st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
-            inventory_names = [""] + list(inventory_data['name'])
-            for i, ing in enumerate(st.session_state.order_ingredients):
-                c1, c2, c3 = st.columns([3, 1, 1])
-                ing['name'] = c1.selectbox(f"Ing. {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
-                ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}", value=ing['quantity'])
-                if c3.button("➖", key=f"del_ing_{i}"):
-                    st.session_state.order_ingredients.pop(i); st.rerun()
-            if st.button("Añadir Ingrediente", use_container_width=True):
-                st.session_state.order_ingredients.append({'name': '', 'quantity': 1}); st.rerun()
-            with st.form("order_form", clear_on_submit=True):
-                order_title = st.text_input("Título del Pedido")
-                order_price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
-                if st.form_submit_button("Crear Pedido", type="primary", use_container_width=True):
-                    valid_ings = [ing for ing in st.session_state.order_ingredients if ing['name']]
-                    if manager.create_order(order_title, order_price, valid_ings):
-                        st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]; st.rerun()
-
-        tab_proc, tab_comp = st.tabs(["En Proceso", "Historial"])
-        with tab_proc:
-            processing = st.session_state.orders_df[st.session_state.orders_df['status'] == 'processing']
-            if processing.empty: st.info("No hay pedidos en proceso.")
+                with st.form("save_to_db_form"):
+                    st.subheader("💾 Registrar en Inventario")
+                    custom_id = st.text_input("ID Personalizado (SKU):", key="custom_id")
+                    description = st.text_input("Descripción:", value=analysis_data.get('elemento_identificado', ''))
+                    quantity = st.number_input("Unidades:", min_value=1, value=analysis_data.get('cantidad_aproximada', 1), step=1)
+                    
+                    if st.form_submit_button("Añadir a la Base de Datos"):
+                        if not custom_id or not description:
+                            st.warning("El ID y la Descripción son obligatorios.")
+                        else:
+                            with st.spinner("Guardando..."):
+                                data_to_save = {
+                                    "name": description,
+                                    "quantity": quantity,
+                                    "tipo": "imagen",
+                                    "analisis_ia": analysis_data
+                                }
+                                firebase.save_inventory_item(data_to_save, custom_id)
+                                st.success(f"¡Artículo '{description}' guardado con éxito!")
+                                st.session_state.analysis_in_progress = False
+                                st.rerun()
             else:
-                for _, order in processing.iterrows():
-                    with st.container(border=True):
-                        st.subheader(f"{order['title']} - ${order['price']:.2f}")
-                        st.caption(f"Ing: {', '.join([f'{i['name']} (x{i['quantity']})' for i in order['ingredients']])}")
-                        b1, b2 = st.columns(2)
-                        if b1.button("✅ Completar", key=f"comp_{order['id']}", type="primary", use_container_width=True):
-                            manager.complete_order(order['id']); st.rerun()
-                        if b2.button("❌ Cancelar", key=f"canc_{order['id']}", use_container_width=True):
-                            manager.cancel_order(order['id']); st.rerun()
-        with tab_comp:
-            completed = st.session_state.orders_df[st.session_state.orders_df['status'] == 'completed']
-            if completed.empty: st.info("No hay pedidos en el historial.")
-            else: st.dataframe(completed[['id', 'title', 'price']], use_container_width=True, hide_index=True)
+                 st.error(f"Error de Gemini: {analysis_data['error']}")
+        except json.JSONDecodeError:
+            st.error("La IA devolvió un formato inesperado.")
+            st.code(analysis_text, language='text')
 
-    with col_report:
-        st.header("Informe y Diagnóstico", divider="violet")
-        report_data = manager.get_report()
-        st.metric("💰 Total Ventas (Completados)", f"${report_data['total_sales']:.2f}")
-        st.subheader("Inventario Final")
-        st.dataframe(report_data['final_inventory'][['name', 'quantity']], use_container_width=True, hide_index=True)
-        st.divider()
-        st.subheader("Diagnóstico de Alertas")
-        st.info(f"**Estado de Conexión Twilio:** `{st.session_state.get('twilio_status', 'No determinado')}`")
-        if st.button("📲 Enviar Notificación de Prueba", use_container_width=True):
-            enviar_alerta_whatsapp("Este es un mensaje de prueba desde el Gestor de Inventarios.")
+        if st.button("↩️ Analizar otra imagen"):
+            st.session_state.analysis_in_progress = False; st.rerun()
+    else:
+        # ... (resto de la lógica de carga de imagen y YOLO)
+        img_source = st.radio("Fuente de la imagen:", ["Cámara", "Subir archivo"], horizontal=True)
+        img_buffer = None
+        if img_source == "Cámara": img_buffer = st.camera_input("Apunta la cámara", key="camera_input")
+        else: img_buffer = st.file_uploader("Sube una imagen", type=['png', 'jpg'], key="file_uploader")
 
-with tab_about:
+        if img_buffer:
+            pil_image = Image.open(img_buffer)
+            with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
+                results = yolo_model(pil_image)
+
+            st.image(results[0].plot(), caption="Objetos detectados por YOLO.", use_container_width=True)
+            
+            detections = results[0]
+            if detections.boxes:
+                for i, box in enumerate(detections.boxes):
+                    class_name = detections.names[box.cls[0].item()]
+                    if st.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}"):
+                        coords = box.xyxy[0].cpu().numpy().astype(int)
+                        cropped_pil_image = pil_image.crop(tuple(coords))
+                        with st.spinner("🤖 Gemini está analizando..."):
+                            analysis_text = gemini.analyze_image(cropped_pil_image, f"Objeto: {class_name}")
+                            st.session_state.last_analysis = analysis_text
+                            st.session_state.analysis_in_progress = True
+                            st.rerun()
+
+
+elif page == "📦 Gestión de Inventario":
+    st.header("📦 Gestión de la Base de Datos de Inventario")
+
+    with st.expander("➕ Añadir Artículo Manualmente"):
+        with st.form("manual_add_form"):
+            custom_id = st.text_input("ID Personalizado (SKU, Código, etc.)")
+            name = st.text_input("Nombre o Descripción")
+            quantity = st.number_input("Cantidad", min_value=0, step=1)
+            
+            if st.form_submit_button("Guardar Artículo"):
+                if not custom_id or not name:
+                    st.warning("El ID y el Nombre son obligatorios.")
+                else:
+                    data = {"name": name, "quantity": quantity, "tipo": "manual"}
+                    try:
+                        firebase.save_inventory_item(data, custom_id)
+                        st.success(f"Artículo '{name}' guardado.")
+                    except ValueError as e:
+                        st.error(str(e))
+
+    st.markdown("---")
+    st.subheader("Inventario Actual en Firebase")
+
+    if st.button("🔄 Refrescar Datos"): st.rerun()
+
+    try:
+        with st.spinner("Cargando inventario..."):
+            items = firebase.get_all_inventory_items()
+        
+        if items:
+            df_items = pd.DataFrame(items)
+            st.dataframe(df_items[['id', 'name', 'quantity', 'tipo']], use_container_width=True, hide_index=True)
+
+            item_to_delete = st.selectbox("Selecciona un artículo para eliminar (opcional)", [""] + [f"{item['name']} ({item['id']})" for item in items])
+            if item_to_delete:
+                item_id_to_delete = item_to_delete.split('(')[-1].replace(')','')
+                if st.button(f"🗑️ Eliminar '{item_to_delete}'", type="primary"):
+                    firebase.delete_inventory_item(item_id_to_delete)
+                    st.success(f"Artículo eliminado.")
+                    st.rerun()
+        else:
+            st.warning("El inventario está vacío.")
+            
+    except Exception as e:
+        st.error(f"No se pudo conectar con la base de datos: {e}")
+
+elif page == "🛒 Gestión de Pedidos":
+    st.header("🛒 Gestión de Pedidos", divider="green")
+    
+    inventory_items = firebase.get_all_inventory_items()
+    inventory_names = [""] + sorted([item['name'] for item in inventory_items])
+
+    col1, col2 = st.columns(2, gap="large")
+
+    with col1:
+        st.subheader("📝 Crear Nuevo Pedido")
+        if 'order_ingredients' not in st.session_state: 
+            st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]
+
+        for i, ing in enumerate(st.session_state.order_ingredients):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            ing['name'] = c1.selectbox(f"Ing. {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
+            ing['quantity'] = c2.number_input("Cant.", min_value=1, step=1, key=f"ing_qty_{i}", value=ing['quantity'])
+            if c3.button("➖", key=f"del_ing_{i}"):
+                st.session_state.order_ingredients.pop(i); st.rerun()
+        
+        if st.button("Añadir Ingrediente", use_container_width=True):
+            st.session_state.order_ingredients.append({'name': '', 'quantity': 1}); st.rerun()
+
+        with st.form("order_form", clear_on_submit=True):
+            title = st.text_input("Título del Pedido")
+            price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
+            if st.form_submit_button("Crear Pedido", type="primary", use_container_width=True):
+                valid_ings = [ing for ing in st.session_state.order_ingredients if ing['name']]
+                if not title or price <= 0 or not valid_ings:
+                    st.error("El pedido debe tener título, precio e ingredientes.")
+                else:
+                    order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing'}
+                    firebase.create_order(order_data)
+                    st.success(f"Pedido '{title}' creado.")
+                    enviar_alerta_whatsapp(f"🧾 Nuevo Pedido: {title} por ${price:.2f}")
+                    st.session_state.order_ingredients = [{'name': '', 'quantity': 1}]; st.rerun()
+
+    with col2:
+        st.subheader("⏳ Pedidos en Proceso")
+        processing_orders = firebase.get_orders(status='processing')
+        if not processing_orders:
+            st.info("No hay pedidos en proceso.")
+        for order in processing_orders:
+            with st.container(border=True):
+                st.subheader(f"{order['title']} - ${order.get('price', 0):.2f}")
+                st.caption(f"Ing: {', '.join([f'{i['name']} (x{i['quantity']})' for i in order['ingredients']])}")
+                b1, b2 = st.columns(2)
+                if b1.button("✅ Completar", key=f"comp_{order['id']}", type="primary", use_container_width=True):
+                    with st.spinner("Procesando..."):
+                        success, message = firebase.complete_order(order['id'])
+                    if success:
+                        st.success(message)
+                        enviar_alerta_whatsapp(f"✅ Pedido Completado: {order['title']}")
+                        st.rerun()
+                    else:
+                        st.warning(message)
+                if b2.button("❌ Cancelar", key=f"canc_{order['id']}", use_container_width=True):
+                    firebase.cancel_order(order['id']); st.rerun()
+
+    st.markdown("---")
+    st.subheader("✅ Historial de Pedidos Completados")
+    completed_orders = firebase.get_orders(status='completed')
+    if completed_orders:
+        df_completed = pd.DataFrame(completed_orders)
+        st.dataframe(df_completed[['id', 'title', 'price']], use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay pedidos en el historial.")
+
+
+elif page == "📊 Dashboard":
+    st.header("📊 Dashboard del Inventario")
+    try:
+        with st.spinner("Generando estadísticas..."):
+            items = firebase.get_all_inventory_items()
+        
+        if items:
+            df = pd.DataFrame(items)
+            
+            st.subheader("Distribución de Artículos por Tipo de Registro")
+            type_counts = df['tipo'].value_counts()
+            fig_pie = px.pie(
+                type_counts, 
+                values=type_counts.values, 
+                names=type_counts.index, 
+                title="Tipos de Registros en el Inventario",
+                color_discrete_sequence=px.colors.sequential.Teal
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.subheader("Cantidad de Unidades por Artículo")
+            df_quant = df.sort_values('quantity', ascending=False)
+            fig_bar = px.bar(
+                df_quant,
+                x='name',
+                y='quantity',
+                title='Stock por Artículo',
+                labels={'name':'Artículo', 'quantity':'Cantidad'}
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.warning("No hay datos en el inventario para generar un dashboard.")
+    except Exception as e:
+        st.error(f"Error al crear el dashboard: {e}")
+
+elif page == "👥 Acerca de":
+    st.header("👥 Sobre el Proyecto y sus Creadores")
+    # ... (pegar aquí la lógica de la página "👥 Acerca de")
     with st.container(border=True):
-        st.header("Sobre el Autor y la Aplicación")
-        _, center_col, _ = st.columns([1, 1, 1])
-        with center_col:
-            st.image("https://placehold.co/250x250/2B3137/FFFFFF?text=J.S.", width=250, caption="Joseph Javier Sánchez Acuña")
-        st.title("Joseph Javier Sánchez Acuña")
-        st.subheader("_Ingeniero Industrial, Experto en Inteligencia Artificial y Desarrollo de Software._")
-        st.markdown("---")
-        st.subheader("Acerca de esta Herramienta")
-        st.markdown("Esta aplicación de **Gestión de Inventarios** fue creada para ofrecer una solución sencilla pero potente para pequeños negocios. Permite un control en tiempo real del stock, la creación de pedidos y la visualización de un informe financiero básico.")
-        st.markdown("---")
-        st.subheader("Contacto y Enlaces Profesionales")
-        st.markdown("""
-            - 🔗 **LinkedIn:** [joseph-javier-sánchez-acuña](https://www.linkedin.com/in/joseph-javier-sánchez-acuña-150410275)
-            - 📂 **GitHub:** [GIUSEPPESAN21](https://github.com/GIUSEPPESAN21)
-            - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
-        """)
-
+        col_img_est, col_info_est = st.columns([1, 3])
+        with col_img_est:
+            st.image("https://placehold.co/250x250/000000/FFFFFF?text=J.S.", caption="Joseph Javier Sánchez Acuña")
+        with col_info_est:
+            st.title("Joseph Javier Sánchez Acuña")
+            st.subheader("_Estudiante de Ingeniería Industrial_")
+            st.subheader("_Experto en Inteligencia Artificial y Desarrollo de Software._")
+            st.markdown(
+                """
+                - 🔗 **LinkedIn:** [joseph-javier-sánchez-acuña](https://www.linkedin.com/in/joseph-javier-sánchez-acuña-150410275)
+                - 📂 **GitHub:** [GIUSEPPESAN21](https://github.com/GIUSEPPESAN21)
+                - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
+                """
+            )
