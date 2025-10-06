@@ -195,7 +195,7 @@ elif page == "📸 Análisis de Imagen":
             with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
                 results = yolo_model(pil_image)
 
-            st.image(results[0].plot(), caption="Objetos detectados por YOLO.", use_container_width=True)
+            st.image(results[0].plot(), caption="Objetos detectados por YOLO.", use_column_width=True)
             
             detections = results[0]
             if detections.boxes:
@@ -241,7 +241,7 @@ elif page == "📦 Gestión de Inventario":
         
         if items:
             df_items = pd.DataFrame(items)
-            st.dataframe(df_items[['id', 'name', 'quantity', 'tipo']], use_container_width=True, hide_index=True)
+            st.dataframe(df_items[['id', 'name', 'quantity', 'tipo']], hide_index=True, use_container_width=True)
 
             item_to_delete = st.selectbox("Selecciona un artículo para eliminar (opcional)", [""] + [f"{item['name']} ({item['id']})" for item in items])
             if item_to_delete:
@@ -281,7 +281,6 @@ elif page == "🛒 Gestión de Pedidos":
             c1, c2, c3 = st.columns([3, 1, 1])
             selected_name = c1.selectbox(f"Ingrediente {i+1}", inventory_names, key=f"ing_name_{i}", index=inventory_names.index(ing['name']) if ing['name'] in inventory_names else 0)
             
-            # CORRECCIÓN: Al seleccionar un nombre, guardamos el nombre Y el ID correspondiente
             ing['name'] = selected_name
             ing['id'] = inventory_map.get(selected_name)
             
@@ -296,7 +295,6 @@ elif page == "🛒 Gestión de Pedidos":
             title = st.text_input("Título del Pedido")
             price = st.number_input("Precio de Venta ($)", min_value=0.01, format="%.2f")
             if st.form_submit_button("Crear Pedido", type="primary", use_container_width=True):
-                # CORRECCIÓN: Nos aseguramos de que el ingrediente tenga un ID válido
                 valid_ings = [ing for ing in st.session_state.order_ingredients if ing['id']]
                 if not title or price <= 0 or not valid_ings:
                     st.error("El pedido debe tener título, precio e ingredientes válidos.")
@@ -334,7 +332,7 @@ elif page == "🛒 Gestión de Pedidos":
     completed_orders = firebase.get_orders(status='completed')
     if completed_orders:
         df_completed = pd.DataFrame(completed_orders)
-        st.dataframe(df_completed[['id', 'title', 'price']], use_container_width=True, hide_index=True)
+        st.dataframe(df_completed[['id', 'title', 'price']], hide_index=True, use_container_width=True)
     else:
         st.info("No hay pedidos en el historial.")
 
@@ -390,3 +388,4 @@ elif page == "👥 Acerca de":
                 - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
                 """
             )
+
