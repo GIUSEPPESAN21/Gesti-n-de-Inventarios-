@@ -73,11 +73,14 @@ class FirebaseManager:
             logger.error(f"Error fatal al inicializar Firebase: {e}")
             raise
 
-    # ... (El resto de los métodos permanecen igual)
+    def get_timestamp(self):
+        """Retorna el timestamp actual en formato ISO 8601."""
+        return datetime.now().isoformat()
+
     def save_inventory_item(self, data, custom_id):
         try:
             doc_ref = self.db.collection('inventory').document(custom_id)
-            data['timestamp'] = datetime.now().isoformat()
+            data['timestamp'] = self.get_timestamp() # Usamos el nuevo método
             doc_ref.set(data, merge=True)
             logger.info(f"Elemento de inventario guardado/actualizado: {custom_id}")
         except Exception as e:
@@ -107,7 +110,7 @@ class FirebaseManager:
 
     def create_order(self, order_data):
         try:
-            order_data['timestamp'] = datetime.now().isoformat()
+            order_data['timestamp'] = self.get_timestamp() # Usamos el nuevo método
             self.db.collection('orders').add(order_data)
             logger.info("Nuevo pedido creado.")
         except Exception as e:
@@ -153,4 +156,3 @@ class FirebaseManager:
             # Captura cualquier error que ocurra durante la transacción (ej. ValueError por stock)
             logger.error(f"Fallo la transacción para el pedido {order_id}: {e}")
             return False, f"Error en la transacción: {str(e)}"
-
