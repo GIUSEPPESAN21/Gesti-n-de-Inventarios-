@@ -14,6 +14,7 @@ import json
 from collections import Counter
 import random
 import base64
+from datetime import datetime
 
 # --- Importaciones de utilidades y dependencias ---
 from firebase_utils import FirebaseManager
@@ -252,7 +253,7 @@ elif page == "📸 Análisis de Imagen":
                                     "quantity": quantity,
                                     "tipo": "imagen",
                                     "analisis_ia": analysis_data,
-                                    "timestamp": firebase.get_timestamp()
+                                    "timestamp": datetime.now().isoformat()
                                 }
                                 firebase.save_inventory_item(data_to_save, custom_id)
                                 st.success(f"¡Artículo '{description}' guardado con éxito!")
@@ -359,7 +360,7 @@ elif page == "📦 Inventario":
                     if not custom_id or not name:
                         st.warning("El ID y el Nombre son obligatorios.")
                     else:
-                        data = {"name": name, "quantity": quantity, "tipo": "manual", "timestamp": firebase.get_timestamp()}
+                        data = {"name": name, "quantity": quantity, "tipo": "manual", "timestamp": datetime.now().isoformat()}
                         firebase.save_inventory_item(data, custom_id)
                         st.success(f"Artículo '{name}' guardado.")
                         st.rerun()
@@ -415,7 +416,7 @@ elif page == "🛒 Pedidos":
                     if not title or price <= 0 or not valid_ings:
                         st.error("El pedido debe tener título, precio e ingredientes válidos.")
                     else:
-                        order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing', "timestamp": firebase.get_timestamp()}
+                        order_data = {'title': title, 'price': price, 'ingredients': valid_ings, 'status': 'processing', "timestamp": datetime.now().isoformat()}
                         firebase.create_order(order_data)
                         st.success(f"Pedido '{title}' creado.")
                         enviar_alerta_whatsapp(f"🧾 Nuevo Pedido: {title} por ${price:.2f}")
@@ -508,4 +509,3 @@ elif page == "👥 Acerca de":
                 - **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
                 """
             )
-
